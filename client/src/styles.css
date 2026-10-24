@@ -264,3 +264,16 @@
   background-size: 200% 100%;
   animation: shimmer 1.6s linear infinite;
 }
+
+@media print {
+  [aria-label="Sidebar"],
+  header.sticky,
+  .skip-link,
+  .no-print {
+    display: none !important;
+  }
+  body {
+    background: #fff !important;
+    color: #000 !important;
+  }
+}

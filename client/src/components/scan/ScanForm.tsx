@@ -10,6 +10,7 @@ import { LabeledSwitch } from "@/components/ui/labeled-switch";
 import { SegmentedControl } from "@/components/ui/segmented-control";
 import { TextField } from "@/components/ui/text-field";
 import type { Scan } from "@/lib/types";
+import { useGithub } from "@/lib/useGithub";
 import { useScanStore } from "@/state/scanStore";
 
 /** Returns a normalized http(s) URL, or an error message. Bare domains get https://. */
@@ -45,6 +46,8 @@ export function ScanForm() {
   const [repoError, setRepoError] = useState<string>();
   const [auto, setAuto] = useState(false);
   const [busy, setBusy] = useState(false);
+  const { data: gh } = useGithub();
+  const suggestions = gh?.connected ? gh.repos.filter((r) => r.enabled) : [];
 
   const repoConnected = repo.trim() !== "" && REPO_RE.test(repo.trim());
 
@@ -138,6 +141,7 @@ export function ScanForm() {
       <div className="space-y-2">
         <TextField
           id="scan-repo"
+          list="scan-repo-options"
           label="GitHub repo (optional)"
           placeholder="owner/repo"
           autoComplete="off"
@@ -150,6 +154,11 @@ export function ScanForm() {
             if (repoError) setRepoError(undefined);
           }}
         />
+        <datalist id="scan-repo-options">
+          {suggestions.map((r) => (
+            <option key={r.full_name} value={r.full_name} />
+          ))}
+        </datalist>
         {repoConnected && (
           <p className="flex items-center gap-2" role="status">
             <Chip className="gap-1.5 text-success">

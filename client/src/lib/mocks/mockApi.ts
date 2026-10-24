@@ -2,6 +2,7 @@ import { emptyCounters } from "@/lib/score";
 import type {
   CreateScanInput,
   Fix,
+  GithubStatus,
   Issue,
   PullRequest,
   Scan,
@@ -171,7 +172,41 @@ function ensureRun(scan: Scan, speed: number) {
   return r;
 }
 
+let github: GithubStatus = { connected: false, repos: [] };
+const copy = (g: GithubStatus): GithubStatus => ({ ...g, repos: g.repos.map((r) => ({ ...r })) });
+
 export const mockApi: ScanApi = {
+  async getGithub() {
+    await delay(150);
+    return copy(github);
+  },
+  async connectGithub() {
+    await delay(900);
+    github = {
+      connected: true,
+      account: "shopeasy",
+      repos: [
+        { full_name: "shopeasy/shopeasy-demo", enabled: true },
+        { full_name: "shopeasy/shopeasy-demo-reset", enabled: false },
+        { full_name: "shopeasy/marketing-site", enabled: false },
+      ],
+    };
+    return copy(github);
+  },
+  async disconnectGithub() {
+    await delay(300);
+    github = { connected: false, repos: [] };
+    return copy(github);
+  },
+  async setGithubRepo(fullName, enabled) {
+    await delay(150);
+    github = {
+      ...github,
+      repos: github.repos.map((r) => (r.full_name === fullName ? { ...r, enabled } : r)),
+    };
+    return copy(github);
+  },
+
   async createScan(input: CreateScanInput) {
     await delay(300);
     const scan: Scan = {

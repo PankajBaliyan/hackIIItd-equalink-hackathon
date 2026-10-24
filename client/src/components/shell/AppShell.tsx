@@ -11,6 +11,8 @@ import {
   Github,
   ShieldCheck,
 } from "lucide-react";
+import { useGithub } from "@/lib/useGithub";
+import { A11yBadge } from "@/components/shell/A11yBadge";
 import { navGroups, allNavItems } from "@/lib/nav";
 import { useTheme } from "@/lib/theme";
 import { cn } from "@/lib/utils";
@@ -108,6 +110,7 @@ function ThemeToggle() {
 }
 
 export function AppShell({ children }: { children: ReactNode }) {
+  const { data: gh } = useGithub();
   const [collapsed, setCollapsed] = useState(false);
   const [drawer, setDrawer] = useState(false);
   const pathname = useRouterState({ select: (s) => s.location.pathname });
@@ -209,18 +212,14 @@ export function AppShell({ children }: { children: ReactNode }) {
             {title}
           </p>
           <div className="ml-auto flex items-center gap-2">
-            <span className="hidden items-center gap-1.5 rounded-full border bg-surface px-2.5 py-1 text-xs font-medium text-success sm:inline-flex">
-              <ShieldCheck aria-hidden className="size-3.5" />
-              <span className="text-text">
-                Accessibility of this dashboard: <span className="tabular">100</span>
-              </span>
-            </span>
+            <A11yBadge />
             <Link
               to="/integrations/github"
               className="inline-flex min-h-11 items-center gap-1.5 rounded-full border bg-surface px-2.5 text-xs font-medium text-muted hover:text-text lg:min-h-8"
             >
               <Github aria-hidden className="size-3.5" />
-              <span className="hidden md:inline">GitHub:</span> Not connected
+              <span className="hidden md:inline">GitHub:</span>{" "}
+              {gh?.connected ? gh.account : "Not connected"}
             </Link>
             <ThemeToggle />
           </div>

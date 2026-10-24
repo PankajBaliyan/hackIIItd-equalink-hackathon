@@ -79,12 +79,28 @@ export interface ScanDetail {
 
 export type ConnectionState = "connecting" | "live" | "reconnecting" | "polling" | "closed";
 
+export interface GithubRepo {
+  full_name: string;
+  /** Whether EquaLink may open PRs on this repo. */
+  enabled: boolean;
+}
+
+export interface GithubStatus {
+  connected: boolean;
+  account?: string;
+  repos: GithubRepo[];
+}
+
 /** Everything the UI needs from the backend; implemented by the real client and the mock. */
 export interface ScanApi {
   createScan(input: CreateScanInput): Promise<Scan>;
   listScans(): Promise<Scan[]>;
   getScan(id: string): Promise<ScanDetail>;
   ship(id: string, fixIds?: string[]): Promise<PullRequest>;
+  getGithub(): Promise<GithubStatus>;
+  connectGithub(): Promise<GithubStatus>;
+  disconnectGithub(): Promise<GithubStatus>;
+  setGithubRepo(fullName: string, enabled: boolean): Promise<GithubStatus>;
   /** Streams events until the scan finishes; returns an unsubscribe function. */
   subscribe(
     id: string,

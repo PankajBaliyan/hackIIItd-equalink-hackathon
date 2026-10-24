@@ -6,6 +6,7 @@ import type {
   ScanDetail,
   ScanEvent,
   PullRequest,
+  GithubStatus,
 } from "@/lib/types";
 
 export const API_BASE_URL: string =
@@ -39,6 +40,14 @@ export const realApi: ScanApi = {
     request<PullRequest>(`/scans/${id}/ship`, {
       method: "POST",
       body: JSON.stringify({ fix_ids: fixIds }),
+    }),
+  getGithub: () => request<GithubStatus>("/integrations/github"),
+  connectGithub: () => request<GithubStatus>("/integrations/github/connect", { method: "POST" }),
+  disconnectGithub: () => request<GithubStatus>("/integrations/github", { method: "DELETE" }),
+  setGithubRepo: (fullName, enabled) =>
+    request<GithubStatus>("/integrations/github/repos", {
+      method: "PATCH",
+      body: JSON.stringify({ full_name: fullName, enabled }),
     }),
   subscribe(id, onEvent, onConnection) {
     let lastStage = "";
