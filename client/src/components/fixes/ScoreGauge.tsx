@@ -12,6 +12,16 @@ export default function ScoreGauge({
 }) {
   const value = after ?? before ?? 0;
   const delta = before != null && after != null ? after - before : undefined;
+  if (before == null && after == null) {
+    return (
+      <div className="space-y-2 py-6 text-center">
+        <p className="text-xl font-semibold">Fix validation results</p>
+        <p className="text-sm text-muted">
+          No accessibility score supplied. Review the measured violations for each fix.
+        </p>
+      </div>
+    );
+  }
   return (
     <figure className="space-y-2 text-center">
       <div className="relative mx-auto size-44">

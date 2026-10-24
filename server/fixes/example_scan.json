@@ -1,0 +1,22 @@
+{
+  "url": "https://your-site.example/",
+  "repo": "your-account/your-test-repository",
+  "level": "AA",
+  "page_html": "<!doctype html><html lang=\"en\"><head><title>Example company</title></head><body><main><h1>Company</h1><img src=\"logo.png\"></main></body></html>",
+  "issues": [
+    {
+      "id": "image-1", "rule_id": "image-alt", "wcag_sc": "1.1.1",
+      "impact": "critical", "selector": "img", "html": "<img src=\"logo.png\">",
+      "source_file": "index.html"
+    }
+  ],
+  "fixes": [
+    {
+      "id": "fix-image-1", "issue_id": "image-1", "strategy": "rule",
+      "original": "<img src=\"logo.png\">",
+      "patched": "<img src=\"logo.png\" alt=\"company logo\">",
+      "explanation": "Add the author-provided alternative text. Check that this describes the actual logo.",
+      "confidence": 1
+    }
+  ]
+}

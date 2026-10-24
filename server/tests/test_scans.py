@@ -45,7 +45,8 @@ def test_create_scan_validation(client, body):
 def test_list_get_and_missing(client):
     a = client.post("/scans", json={"url": "a.com"}).json()["id"]
     b = client.post("/scans", json={"url": "b.com"}).json()["id"]
-    assert [s["id"] for s in client.get("/scans").json()] == [b, a]
+    ids = [s["id"] for s in client.get("/scans").json()]
+    assert ids[:2] == [b, a]
     d = client.get(f"/scans/{a}").json()
     assert d["scan"]["id"] == a and d["issues"] == [] and d["fixes"] == []
     assert client.get("/scans/nope").status_code == 404
@@ -55,6 +56,12 @@ def test_list_get_and_missing(client):
 def test_ship_is_not_implemented(client):
     sid = client.post("/scans", json={"url": "a.com"}).json()["id"]
     assert client.post(f"/scans/{sid}/ship").status_code == 501
+
+
+def test_imported_fixes_fall_through_live_scan_routes(client):
+    detail = client.get("/scans/demo")
+    assert detail.status_code == 200 and detail.json()["scan"]["id"] == "demo"
+    assert client.post("/scans/demo/ship", json={}).status_code == 422
 
 
 def test_events_replay_and_stop_at_terminal_stage(client):

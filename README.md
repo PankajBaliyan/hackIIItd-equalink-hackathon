@@ -29,14 +29,16 @@ server/      FastAPI backend: GitHub integration live; scan pipeline planned
 demo-site/   "ShopEasy", a deliberately broken storefront used for demos  (planned)
 ```
 
-`client/`, `server/` and `Docs/` exist today; the server currently implements the GitHub integration only (see `server/README.md`). See `Docs/EquaLink-Execution-Plan.md` for the full architecture, data model and API surface.
+`client/`, `server/` and `Docs/` exist today. The server implements GitHub integration,
+site tracking, and the Fixes review and shipping workflow. See `server/README.md` and
+`server/fixes/README.md` for setup and API details.
 
 ## Planned stack
 
 | Layer | Choice |
 |---|---|
 | Frontend | React, Tailwind, `react-diff-viewer-continued`, `framer-motion`, Recharts |
-| Backend | FastAPI (Python 3.11), `BackgroundTasks` + `asyncio`, SQLite via SQLModel |
+| Backend | FastAPI (Python 3.11+), `asyncio`, PostgreSQL via SQLModel/SQLAlchemy |
 | Live progress | Server-Sent Events (`/scans/{id}/events`) |
 | Web ops | TinyFish Fetch / Agent / Search APIs |
 | Rules engine | `axe-core` in headless Chromium via Playwright |
@@ -74,11 +76,28 @@ To use the real backend, set `VITE_USE_MOCKS=false` and point `VITE_API_BASE_URL
 
 ### Backend (`server/`)
 
-See `server/README.md` to run it and connect GitHub.
+See [`server/README.md`](server/README.md) to run the API and connect GitHub. The
+Fixes module lives in [`server/fixes/`](server/fixes/README.md).
 
-Full set of variables the finished backend will need:
+PostgreSQL 18 is supported for GitHub, repository, and site data. From `server`, run
+`powershell -ExecutionPolicy Bypass -File .\setup_postgres.ps1`; it securely prompts
+for the local `postgres` password, creates the `equalink` database, and writes the
+ignored `.env` file. Refresh the local PostgreSQL server in pgAdmin to see it.
+It imports HTML snapshots and candidate fixes, validates them with axe-core,
+persists review decisions, and opens GitHub PRs for selected validated fixes.
 
-Environment variables the backend will need:
+```sh
+cd server
+uv sync --dev
+uv run uvicorn main:app --host 127.0.0.1 --port 8000 --reload
+```
+
+Install the frontend dependencies and Playwright Chromium as described in the
+Fixes README before importing fixes. The frontend uses the backend by default;
+set `VITE_USE_MOCKS=true` only for the browser-only scan demo. URL crawling and
+automatic fix generation remain separate planned pipeline components.
+
+Additional variables the finished scan pipeline will need:
 
 | Variable | Purpose |
 |---|---|

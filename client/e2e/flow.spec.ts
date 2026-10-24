@@ -1,6 +1,8 @@
 import AxeBuilder from "@axe-core/playwright";
 import { expect, test } from "@playwright/test";
 
+test.skip(process.env["FIXES_API_E2E"] === "true", "Runs only in the browser-mock suite");
+
 test("full demo path on mocks: scan → live → fixes → diff → PR", async ({ page }) => {
   await page.goto("/");
   await page.waitForLoadState("networkidle"); // wait for hydration
@@ -17,10 +19,10 @@ test("full demo path on mocks: scan → live → fixes → diff → PR", async (
   await page.getByRole("link", { name: /Review fixes/ }).click({ timeout: 40_000 });
 
   await expect(page.getByRole("heading", { name: "Review fixes" })).toBeVisible();
-  await expect(page.getByText("Verified by TinyFish").first()).toBeVisible();
+  await expect(page.getByText("Demo validation results").first()).toBeVisible();
   await page.getByRole("button", { name: /Link has no accessible name/ }).click();
-  await expect(page.getByText("Caught by the rules engine")).toBeVisible();
-  await page.getByRole("button", { name: /Clickable element is not a button/ }).click();
+  await expect(page.getByText("Rejected by validation")).toBeVisible();
+  await page.getByRole("button", { name: /Button has no accessible name/ }).click();
   await expect(page.getByRole("region", { name: "Code diff" })).toBeVisible({ timeout: 20_000 });
 
   const axe = await new AxeBuilder({ page })

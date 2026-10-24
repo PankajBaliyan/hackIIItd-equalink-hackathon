@@ -1,5 +1,7 @@
 import { expect, test } from "@playwright/test";
 
+test.skip(process.env["FIXES_API_E2E"] === "true", "Runs only in the browser-mock suite");
+
 test("github integration: connect, toggle a repo, disconnect", async ({ page }) => {
   await page.goto("/integrations/github");
   await page.waitForLoadState("networkidle"); // wait for hydration

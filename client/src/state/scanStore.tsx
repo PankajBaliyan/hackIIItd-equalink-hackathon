@@ -19,6 +19,7 @@ import type {
   PullRequest,
   Scan,
   ScanEvent,
+  ScanDetail,
   Severity,
 } from "@/lib/types";
 
@@ -33,12 +34,13 @@ export interface ScanState {
   /** PRs opened in this session (for /pull-requests). */
   pullRequests: PullRequest[];
   error: string | null;
+  summary: ScanDetail["summary"] | null;
 }
 
 type Action =
   | { type: "reset" }
   | { type: "scan"; scan: Scan }
-  | { type: "detail"; scan: Scan; issues: Issue[]; fixes: Fix[]; pr?: PullRequest }
+  | ({ type: "detail" } & ScanDetail)
   | { type: "event"; event: ScanEvent }
   | { type: "connection"; connection: ConnectionState }
   | { type: "pr"; pr: PullRequest }
@@ -54,6 +56,7 @@ const initial: ScanState = {
   connection: "closed",
   pullRequests: [],
   error: null,
+  summary: null,
 };
 
 function reducer(state: ScanState, a: Action): ScanState {
@@ -68,7 +71,8 @@ function reducer(state: ScanState, a: Action): ScanState {
         scan: a.scan,
         issues: a.issues,
         fixes: a.fixes,
-        pr: a.pr ?? state.pr,
+        pr: a.pr ?? null,
+        summary: a.summary ?? null,
         error: null,
       };
     case "event": {
@@ -102,7 +106,8 @@ interface StoreValue extends ScanState {
   startScan(input: CreateScanInput): Promise<Scan>;
   /** Loads detail for an id and, if unfinished, streams live events. */
   openScan(id: string): void;
-  ship(fixIds?: string[]): Promise<PullRequest | undefined>;
+  ship(fixIds?: string[]): Promise<PullRequest>;
+  setFixIncluded(fixId: string, included: boolean): Promise<void>;
   reset(): void;
 }
 
@@ -112,6 +117,7 @@ export function ScanStoreProvider({ children }: { children: ReactNode }) {
   const [state, dispatch] = useReducer(reducer, initial);
   const unsub = useRef<(() => void) | null>(null);
   const stateRef = useRef(state);
+  const activeId = useRef<string | null>(null);
   stateRef.current = state;
 
   const stream = useCallback(async (id: string) => {
@@ -120,10 +126,19 @@ export function ScanStoreProvider({ children }: { children: ReactNode }) {
     unsub.current = api.subscribe(
       id,
       (event) => {
+        if (activeId.current !== id) return;
         dispatch({ type: "event", event });
         // Pull full issue/fix data as soon as each stage that produces it completes.
         if (event.stage === "done" || event.stage === "fixing" || event.stage === "verifying") {
-          void api.getScan(id).then((d) => dispatch({ type: "detail", ...d }));
+          void api
+            .getScan(id)
+            .then((d) => {
+              if (activeId.current === id) dispatch({ type: "detail", ...d });
+            })
+            .catch((e: unknown) => {
+              if (activeId.current === id)
+                dispatch({ type: "error", error: e instanceof Error ? e.message : String(e) });
+            });
         }
       },
       (connection) => dispatch({ type: "connection", connection }),
@@ -134,6 +149,7 @@ export function ScanStoreProvider({ children }: { children: ReactNode }) {
     async (input: CreateScanInput) => {
       const api = await getApi();
       const scan = await api.createScan(input);
+      activeId.current = scan.id;
       dispatch({ type: "scan", scan });
       void stream(scan.id);
       return scan;
@@ -143,40 +159,53 @@ export function ScanStoreProvider({ children }: { children: ReactNode }) {
 
   const openScan = useCallback(
     (id: string) => {
-      if (stateRef.current.scan?.id === id) return;
+      if (activeId.current === id) return;
+      activeId.current = id;
+      unsub.current?.();
       dispatch({ type: "reset" });
       void getApi()
         .then((api) => api.getScan(id))
         .then((d) => {
+          if (activeId.current !== id) return;
           dispatch({ type: "detail", ...d });
           if (d.scan.status !== "done" && d.scan.status !== "failed") void stream(id);
         })
-        .catch((e: unknown) =>
-          dispatch({ type: "error", error: e instanceof Error ? e.message : String(e) }),
-        );
+        .catch((e: unknown) => {
+          if (activeId.current !== id) return;
+          activeId.current = null;
+          dispatch({ type: "error", error: e instanceof Error ? e.message : String(e) });
+        });
     },
     [stream],
   );
 
   const ship = useCallback(async (fixIds?: string[]) => {
     const id = stateRef.current.scan?.id;
-    if (!id) return undefined;
+    if (!id) throw new Error("Load a scan before opening a pull request.");
     const api = await getApi();
     const pr = await api.ship(id, fixIds);
-    dispatch({ type: "pr", pr });
+    if (activeId.current === id) dispatch({ type: "pr", pr });
     return pr;
+  }, []);
+
+  const setFixIncluded = useCallback(async (fixId: string, included: boolean) => {
+    const id = stateRef.current.scan?.id;
+    if (!id) throw new Error("Load a scan before reviewing a fix.");
+    const detail = await (await getApi()).setFixIncluded(id, fixId, included);
+    if (activeId.current === id) dispatch({ type: "detail", ...detail });
   }, []);
 
   const reset = useCallback(() => {
     unsub.current?.();
+    activeId.current = null;
     dispatch({ type: "reset" });
   }, []);
 
   useEffect(() => () => unsub.current?.(), []);
 
   const value = useMemo<StoreValue>(
-    () => ({ ...state, startScan, openScan, ship, reset }),
-    [state, startScan, openScan, ship, reset],
+    () => ({ ...state, startScan, openScan, ship, setFixIncluded, reset }),
+    [state, startScan, openScan, ship, setFixIncluded, reset],
   );
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

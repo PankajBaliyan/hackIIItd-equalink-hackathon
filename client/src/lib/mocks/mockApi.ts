@@ -176,6 +176,37 @@ let github: GithubStatus = { connected: false, repos: [] };
 const copy = (g: GithubStatus): GithubStatus => ({ ...g, repos: g.repos.map((r) => ({ ...r })) });
 
 export const mockApi: ScanApi = {
+  async importScan() {
+    throw new Error("Import is available with the FastAPI backend. Set VITE_USE_MOCKS=false.");
+  },
+  async listRepoFiles() {
+    throw new Error("Repository scanning needs the FastAPI backend. Set VITE_USE_MOCKS=false.");
+  },
+  async scanRepo() {
+    throw new Error("Repository scanning needs the FastAPI backend. Set VITE_USE_MOCKS=false.");
+  },
+  async setFixIncluded(id, fixId, included) {
+    const detail = await mockApi.getScan(id);
+    const fix = detail.fixes.find((f) => f.id === fixId);
+    if (!fix || (included && !fix.validated)) throw new Error("Fix is not eligible.");
+    fix.included = included;
+    return detail;
+  },
+  async listGithubPulls() {
+    throw new Error("Pull requests need the FastAPI backend. Set VITE_USE_MOCKS=false.");
+  },
+  async listBranches() {
+    throw new Error("Pull requests need the FastAPI backend. Set VITE_USE_MOCKS=false.");
+  },
+  async compareBranches() {
+    throw new Error("Pull requests need the FastAPI backend. Set VITE_USE_MOCKS=false.");
+  },
+  async createPull() {
+    throw new Error("Pull requests need the FastAPI backend. Set VITE_USE_MOCKS=false.");
+  },
+  async listPullRequests() {
+    return [...prs.values()];
+  },
   async getGithub() {
     await delay(150);
     return copy(github);
@@ -192,6 +223,9 @@ export const mockApi: ScanApi = {
       ],
     };
     return copy(github);
+  },
+  async connectGithubToken() {
+    return mockApi.connectGithub();
   },
   async disconnectGithub() {
     await delay(300);

@@ -10,7 +10,7 @@ class GithubConnection(SQLModel, table=True):
     mode: str  # "pat" | "app" | "oauth"
     account: str
     installation_id: int | None = None  # GitHub App only
-    access_token: str | None = None  # OAuth only (user token; stored server-side, never sent to the browser)
+    access_token: str | None = None  # OAuth/PAT token; stored server-side, never sent to the browser
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 

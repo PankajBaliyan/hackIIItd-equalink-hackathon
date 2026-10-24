@@ -4,6 +4,7 @@ import { RecentScans } from "@/components/scan/RecentScans";
 import { ScanForm } from "@/components/scan/ScanForm";
 import { TrustStrip } from "@/components/scan/TrustStrip";
 import { FocusHeading } from "@/components/shell/PagePlaceholder";
+import { ImportFixes } from "@/components/fixes/ImportFixes";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -39,6 +40,7 @@ function Page() {
         </p>
         <PipelineGraphic />
       </section>
+      <ImportFixes />
       <div className="grid gap-8 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
         <ScanForm initialUrl={search.url ?? ""} initialRepo={search.repo ?? ""} />
         <RecentScans />

@@ -12,6 +12,9 @@ export interface Scan {
   score_before?: number;
   score_after?: number;
   created_at: string;
+  repo?: string | null;
+  is_demo?: boolean;
+  validation_engine?: "axe-core";
 }
 
 export interface Issue {
@@ -40,6 +43,7 @@ export interface Fix {
   violations_before: number;
   violations_after: number;
   rejected_reason?: string;
+  included?: boolean;
 }
 
 export interface PullRequest {
@@ -75,6 +79,7 @@ export interface ScanDetail {
   issues: Issue[];
   fixes: Fix[];
   pr?: PullRequest;
+  summary?: { accepted: number; rejected: number; review: number; included: number };
 }
 
 export type ConnectionState = "connecting" | "live" | "reconnecting" | "polling" | "closed";
@@ -95,14 +100,70 @@ export interface GithubStatus {
   install_url?: string;
 }
 
+export interface PullSummary {
+  repo: string;
+  number: number;
+  title: string;
+  state: "open" | "closed" | "merged";
+  draft: boolean;
+  author: string;
+  head: string;
+  base: string;
+  url: string;
+  created_at: string;
+  updated_at: string;
+  body: string;
+}
+
+export interface BranchList {
+  default: string;
+  branches: string[];
+}
+
+export interface CompareResult {
+  ahead_by: number;
+  behind_by: number;
+  status: string;
+  commits: { sha: string; message: string }[];
+  files: { filename: string; status: string; additions: number; deletions: number }[];
+}
+
+export interface NewPull {
+  repo: string;
+  base: string;
+  head: string;
+  title: string;
+  body: string;
+  draft: boolean;
+}
+
+export interface RepoFiles {
+  repo: string;
+  branch: string;
+  files: string[];
+}
+
 /** Everything the UI needs from the backend; implemented by the real client and the mock. */
 export interface ScanApi {
   createScan(input: CreateScanInput): Promise<Scan>;
   listScans(): Promise<Scan[]>;
   getScan(id: string): Promise<ScanDetail>;
+  importScan(payload: unknown): Promise<ScanDetail>;
+  /** HTML files in a connected repository that can be scanned. */
+  listRepoFiles(repo: string): Promise<RepoFiles>;
+  /** Read a repository file, find accessibility issues and build validated fixes. */
+  scanRepo(repo: string, path?: string): Promise<ScanDetail>;
+  setFixIncluded(id: string, fixId: string, included: boolean): Promise<ScanDetail>;
+  listPullRequests(): Promise<PullRequest[]>;
+  /** Pull requests on GitHub for one enabled repo, or all enabled repos. */
+  listGithubPulls(state: "open" | "closed" | "all", repo?: string): Promise<PullSummary[]>;
+  listBranches(repo: string): Promise<BranchList>;
+  compareBranches(repo: string, base: string, head: string): Promise<CompareResult>;
+  createPull(input: NewPull): Promise<PullSummary>;
   ship(id: string, fixIds?: string[]): Promise<PullRequest>;
   getGithub(): Promise<GithubStatus>;
   connectGithub(): Promise<GithubStatus>;
+  connectGithubToken(token: string): Promise<GithubStatus>;
   disconnectGithub(): Promise<GithubStatus>;
   setGithubRepo(fullName: string, enabled: boolean): Promise<GithubStatus>;
   /** Streams events until the scan finishes; returns an unsubscribe function. */

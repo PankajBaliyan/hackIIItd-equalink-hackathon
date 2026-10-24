@@ -31,7 +31,7 @@ export const understandingUrl = (sc: string) =>
 
 export const RULE_TITLES: Record<string, { title: string; description: string }> = {
   "button-name": {
-    title: "Clickable element is not a button",
+    title: "Button has no accessible name",
     description: "Interactive controls need a native role, keyboard access and an accessible name.",
   },
   "color-contrast": {

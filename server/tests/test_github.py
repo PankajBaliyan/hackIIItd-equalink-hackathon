@@ -79,6 +79,27 @@ def test_connect_without_config_is_400(client):
     assert r.status_code == 400 and "isn't configured" in r.json()["detail"]
 
 
+def test_pasted_token_connects_and_is_never_returned(client):
+    client.cfg["settings"] = make_settings()
+    app.dependency_overrides[get_settings] = lambda: client.cfg["settings"]
+    token = "github_pat_test_value_123456789"
+    r = client.post("/integrations/github/token", json={"token": token})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["connected"] and body["account"] == "octocat" and body["mode"] == "pat"
+    assert token not in r.text
+    assert client.get("/integrations/github").json()["connected"] is True
+
+
+def test_stale_pat_returns_token_form_instead_of_409(client):
+    client.post("/integrations/github/connect")
+    client.cfg["settings"] = make_settings()
+    app.dependency_overrides[get_settings] = lambda: client.cfg["settings"]
+    r = client.get("/integrations/github")
+    assert r.status_code == 200
+    assert r.json()["connected"] is False and r.json()["mode"] == "none"
+
+
 def test_callback_rejects_bad_state(client):
     r = client.get("/integrations/github/callback", params={"installation_id": 1, "state": "nope"})
     assert r.status_code == 400
@@ -148,3 +169,45 @@ async def test_exchange_code_errors(monkeypatch):
     with pytest.raises(github.GitHubError) as e:
         await github.exchange_code(make_settings(github_client_id="c", github_client_secret="s"), "bad")
     assert "incorrect" in e.value.message
+
+
+def _enable(client, repo="octocat/zeta"):
+    client.post("/integrations/github/connect")
+    client.patch("/integrations/github/repos", json={"full_name": repo, "enabled": True})
+
+
+def test_pull_request_list_branches_and_create(client, monkeypatch):
+    seen = {}
+
+    async def fake_list(token, repo, state):
+        return [{
+            "repo": repo, "number": 7, "title": "Fix alt text", "state": "open", "draft": False, "author": "octocat",
+            "head": "fix", "base": "main", "url": "https://github.com/octocat/zeta/pull/7",
+            "created_at": "2026-01-01T00:00:00Z", "updated_at": "2026-01-01T00:00:00Z", "body": "",
+        }]
+
+    async def fake_branches(token, repo):
+        return "main", ["fix", "main"]
+
+    async def fake_create(token, repo, base, head, title, body, draft):
+        seen.update(repo=repo, base=base, head=head, title=title, draft=draft)
+        return (await fake_list(token, repo, "open"))[0] | {"title": title}
+
+    monkeypatch.setattr(github, "list_pulls", fake_list)
+    monkeypatch.setattr(github, "list_branches", fake_branches)
+    monkeypatch.setattr(github, "create_pull", fake_create)
+
+    # a repository must be switched on first
+    assert client.get("/integrations/github/branches", params={"repo": "octocat/zeta"}).status_code in (403, 409)
+    _enable(client)
+    assert client.get("/integrations/github/pulls").json()[0]["number"] == 7
+    assert client.get("/integrations/github/branches", params={"repo": "octocat/zeta"}).json() == {
+        "default": "main", "branches": ["main", "fix"],
+    }
+    payload = {"repo": "octocat/zeta", "base": "main", "head": "fix", "title": " Fix things ", "draft": True}
+    r = client.post("/integrations/github/pulls", json=payload)
+    assert r.status_code == 201 and seen["title"] == "Fix things" and seen["draft"] is True
+    same = client.post("/integrations/github/pulls", json={**payload, "head": "main"})
+    assert same.status_code == 422
+    other = client.post("/integrations/github/pulls", json={**payload, "repo": "octocat/Alpha"})
+    assert other.status_code == 403

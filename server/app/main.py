@@ -1,6 +1,7 @@
 import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+import os
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -26,9 +27,21 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
 
 app = FastAPI(title="EquaLink API", lifespan=lifespan)
 
+cors_origins = {
+    get_settings().frontend_url,
+    *(
+        value.strip()
+        for value in os.getenv(
+            "CORS_ORIGINS",
+            "http://localhost:5173,http://127.0.0.1:5173,http://localhost:5174,http://127.0.0.1:5174",
+        ).split(",")
+        if value.strip()
+    ),
+}
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[get_settings().frontend_url],
+    allow_origins=sorted(cors_origins),
     allow_methods=["GET", "POST", "PATCH", "DELETE"],
     allow_headers=["Content-Type"],
 )
@@ -38,7 +51,16 @@ app.include_router(sites_router)
 app.include_router(rule_docs_router)
 app.include_router(scans_router)
 
+# The Fixes workflow is isolated as a sub-application. Routers above take
+# precedence for shared paths such as /integrations/github and /health.
+try:
+    from fixes.main import app as fixes_app
+except ImportError:  # Imported as server.app.main from the repository root.
+    from server.fixes.main import app as fixes_app
 
 @app.get("/health")
 def health():
     return {"ok": True, "github_mode": get_settings().github_mode}
+
+
+app.mount("/", fixes_app)

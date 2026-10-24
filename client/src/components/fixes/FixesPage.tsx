@@ -4,6 +4,8 @@ import { Suspense, lazy, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 
 import { ConfidenceMeter } from "@/components/fixes/ConfidenceMeter";
+import { ImportFixes } from "@/components/fixes/ImportFixes";
+import { ScanRepo } from "@/components/fixes/ScanRepo";
 import { buildRows, patchText, SEV_RANK, type Row } from "@/components/fixes/model";
 import { PRCard } from "@/components/fixes/PRCard";
 import { FocusHeading } from "@/components/shell/PagePlaceholder";
@@ -61,6 +63,7 @@ function Select({
     <label className="flex flex-col gap-1 text-sm font-medium">
       {label}
       <select
+        aria-label={label}
         value={value}
         onChange={(e) => onChange(e.target.value)}
         className="min-h-11 rounded-md border bg-surface px-2 text-sm font-normal text-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:min-h-9"
@@ -79,10 +82,14 @@ function Detail({
   row,
   included,
   onInclude,
+  reviewing,
+  locked,
 }: {
   row: Row;
   included: boolean;
   onInclude: (v: boolean) => void;
+  reviewing: boolean;
+  locked: boolean;
 }) {
   const { issue, fix } = row;
   const info = RULE_TITLES[issue.rule_id];
@@ -148,8 +155,8 @@ function Detail({
 
           {fix.validated ? (
             <p className="flex items-center gap-2 text-sm text-success" role="status">
-              <ShieldCheck aria-hidden className="size-4" /> Validated: axe-core confirms this fix
-              removes the violation and adds none.
+              <ShieldCheck aria-hidden className="size-4" /> Validated with axe-core on the HTML
+              snapshot: the reported violation was removed and no new violations were detected.
             </p>
           ) : (
             <div
@@ -157,12 +164,12 @@ function Detail({
               className="space-y-1 rounded-card border border-moderate bg-surface p-4 text-sm"
             >
               <p className="flex items-center gap-2 font-medium">
-                <AlertTriangle aria-hidden className="size-4 text-moderate" /> Caught by the rules
-                engine
+                <AlertTriangle aria-hidden className="size-4 text-moderate" /> Rejected by
+                validation
               </p>
               <p className="text-muted">{fix.rejected_reason}</p>
               <p className="text-muted">
-                The LLM never decides alone. This fix will not be shipped.
+                This fix will not be shipped. Review the validation result above.
               </p>
             </div>
           )}
@@ -174,7 +181,7 @@ function Detail({
           <label className="flex min-h-11 items-center gap-3 text-sm font-medium">
             <Checkbox
               checked={included && fix.validated}
-              disabled={!fix.validated}
+              disabled={!fix.validated || reviewing || locked}
               onCheckedChange={(v) => onInclude(v === true)}
             />
             {fix.validated ? "Include in pull request" : "Not eligible for the pull request"}
@@ -229,7 +236,7 @@ export function FixesPage({ id }: { id: string }) {
 
   const desktop = useMediaQuery("(min-width: 1024px)");
   const [selected, setSelected] = useState<string | null>(null);
-  const [excluded, setExcluded] = useState<Set<string>>(new Set());
+  const [reviewing, setReviewing] = useState(false);
   const [sev, setSev] = useState("all");
   const [status, setStatus] = useState("all");
   const [principle, setPrinciple] = useState("all");
@@ -264,13 +271,17 @@ export function FixesPage({ id }: { id: string }) {
   }, [rows, sev, status, principle, sort, q]);
 
   const counts = {
-    validated: rows.filter((r) => r.status === "validated").length,
-    rejected: rows.filter((r) => r.status === "rejected").length,
-    review: rows.filter((r) => r.status === "needs-review").length,
+    validated: s.summary?.accepted ?? rows.filter((r) => r.status === "validated").length,
+    rejected: s.summary?.rejected ?? rows.filter((r) => r.status === "rejected").length,
+    review: s.summary?.review ?? rows.filter((r) => r.status === "needs-review").length,
   };
-  const includedRows = rows.filter((r) => r.fix?.validated && !excluded.has(r.fix.id));
+  const includedRows = rows.filter((r) => r.fix?.validated && r.fix.included !== false);
   const selectedRow = rows.find((r) => r.issue.id === selected) ?? null;
   const repoMode = scan?.mode === "repo";
+  useEffect(() => {
+    setSelected(null);
+    setConfirm(false);
+  }, [id]);
   const files = [
     ...new Set(includedRows.map((r) => r.issue.source_file).filter((f): f is string => !!f)),
   ];
@@ -316,23 +327,27 @@ export function FixesPage({ id }: { id: string }) {
   const detail = selectedRow && (
     <Detail
       row={selectedRow}
-      included={!!selectedRow.fix && !excluded.has(selectedRow.fix.id)}
-      onInclude={(v) =>
-        setExcluded((prev) => {
-          const n = new Set(prev);
-          if (selectedRow.fix) {
-            if (v) n.delete(selectedRow.fix.id);
-            else n.add(selectedRow.fix.id);
-          }
-          return n;
-        })
-      }
+      included={!!selectedRow.fix && selectedRow.fix.included !== false}
+      reviewing={reviewing}
+      locked={!!s.pr || shipping}
+      onInclude={(v) => {
+        if (!selectedRow.fix) return;
+        setReviewing(true);
+        void s
+          .setFixIncluded(selectedRow.fix.id, v)
+          .catch((e: unknown) => {
+            toast.error("Couldn't save the review", {
+              description: e instanceof Error ? e.message : undefined,
+            });
+          })
+          .finally(() => setReviewing(false));
+      }}
     />
   );
 
   const shipControls = (
     <ShipControls
-      canShip={scan.status === "done"}
+      canShip={scan.status === "done" && !scan.is_demo && !s.pr && !reviewing && !shipping}
       included={includedRows.length}
       onOpen={() => setConfirm(true)}
       onCopy={() => void copyPatch()}
@@ -348,6 +363,34 @@ export function FixesPage({ id }: { id: string }) {
           <p className="break-all font-mono text-sm text-muted">{scan.url}</p>
         </header>
 
+        {scan.is_demo && (
+          <p role="status" className="rounded-card border bg-surface p-4 text-sm text-muted">
+            Demo HTML, checked by the backend with axe-core. Demo data cannot be shipped. Scan
+            one of your repositories below to review real fixes.
+          </p>
+        )}
+        {scan.validation_engine && (
+          <p className="text-sm text-muted">
+            Automated checks cover this static HTML snapshot. Keyboard behavior, image descriptions,
+            and full WCAG compliance require human review.
+          </p>
+        )}
+        <ScanRepo />
+        <details className="rounded-card border bg-surface p-4">
+          <summary className="cursor-pointer text-sm font-medium">
+            Advanced: import a scan from JSON
+          </summary>
+          <div className="pt-3">
+            <ImportFixes />
+          </div>
+        </details>
+
+        {scan.mode === "repo" && !scan.is_demo && rows.length === 0 && (
+          <p role="status" className="rounded-card border bg-surface p-4 text-sm">
+            No accessibility issues were found in this file. Try another HTML file or repository.
+          </p>
+        )}
+
         {s.pr && <PRCard pr={s.pr} files={files} />}
 
         <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)_15rem]">
@@ -359,11 +402,10 @@ export function FixesPage({ id }: { id: string }) {
               <Suspense fallback={<Skeleton className="mx-auto size-44 rounded-full" />}>
                 <ScoreGauge before={scan.score_before} after={scan.score_after} />
               </Suspense>
-              {scan.score_after != null && (
-                <p className="flex items-center justify-center gap-1.5 text-sm text-success">
-                  <ShieldCheck aria-hidden className="size-4" /> Verified by TinyFish
-                </p>
-              )}
+              <p className="flex items-center justify-center gap-1.5 text-sm text-muted">
+                <ShieldCheck aria-hidden className="size-4" />{" "}
+                {scan.validation_engine ? "Checked with axe-core" : "Scan results"}
+              </p>
               <ul className="grid grid-cols-3 gap-2 text-center text-sm">
                 <li>
                   <p className="tabular text-2xl font-semibold">{counts.validated}</p>
@@ -547,8 +589,8 @@ export function FixesPage({ id }: { id: string }) {
               <DialogDescription>
                 {includedRows.length} validated {includedRows.length === 1 ? "fix" : "fixes"} will
                 be committed to a new branch of{" "}
-                {scan.mode === "repo" ? "your repository" : "the repo"}. Nothing is merged
-                automatically.
+                {scan.repo ?? (scan.mode === "repo" ? "your repository" : "the repo")}. Nothing is
+                merged automatically.
               </DialogDescription>
             </DialogHeader>
             <div className="space-y-3 text-sm">

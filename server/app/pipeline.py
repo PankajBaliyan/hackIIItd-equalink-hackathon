@@ -100,8 +100,10 @@ def issue_dict(i: IssueRow) -> dict:
 
 
 async def render(page: Page, url: str) -> None:
-    await page.goto(url, wait_until="load", timeout=30_000)
+    # "domcontentloaded" returns as soon as the HTML is parsed; heavy pages never fire "load" in time.
+    await page.goto(url, wait_until="domcontentloaded", timeout=30_000)
     try:
+        await page.wait_for_load_state("load", timeout=10_000)
         await page.wait_for_load_state("networkidle", timeout=5_000)
     except Exception:
         pass  # chatty pages never go idle; the load event is enough
@@ -194,7 +196,13 @@ async def run_scan(scan_id: str) -> None:
             emit(db, scan_id, "failed", f"scan failed: {msg}")
 
 
+def _run_in_thread(scan_id: str) -> None:
+    # Playwright launches Chromium as a subprocess, which needs a Proactor loop on Windows. uvicorn's
+    # reload mode runs the server on a Selector loop (NotImplementedError), so give each scan its own loop.
+    asyncio.run(run_scan(scan_id))
+
+
 def start(scan_id: str) -> None:
-    task = asyncio.create_task(run_scan(scan_id))
+    task = asyncio.create_task(asyncio.to_thread(_run_in_thread, scan_id))
     _tasks.add(task)
     task.add_done_callback(_tasks.discard)

@@ -1,6 +1,6 @@
 # EquaLink server
 
-FastAPI backend. Today it implements the **GitHub integration** (`/integrations/github`) **Sites** (`/sites`) and real **scans**; scan, fix and ship stages come later (see `Docs/EquaLink-Execution-Plan.md`).
+FastAPI backend for real **Scans**, **Fixes**, **Pull Requests**, **GitHub integration**, and **Sites**.
 
 ## Run
 
@@ -8,19 +8,25 @@ FastAPI backend. Today it implements the **GitHub integration** (`/integrations/
 cd server
 python3.12 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
 # or with uv: uv venv --python 3.12 .venv && uv pip install --python .venv/bin/python -r requirements-dev.txt
-cp .env.example .env      # then edit, see below
-.venv/bin/python -m playwright install chromium   # one-time: browser used for scans
-.venv/bin/uvicorn app.main:app --reload --port 8000
+uv sync --dev
+# Windows: creates the local equalink DB and server/.env after a secure password prompt
+powershell -ExecutionPolicy Bypass -File .\setup_postgres.ps1
+uv run playwright install chromium   # one-time: browser used for scans
+uv run uvicorn main:app --host 127.0.0.1 --port 8000 --reload
 .venv/bin/python -m pytest
 ```
 
-In `client/.env` keep `VITE_API_BASE_URL=http://localhost:8000` and `VITE_GITHUB_LIVE=true`. Scans stay mocked until their endpoints exist.
+In `client/.env` keep `VITE_API_BASE_URL=http://localhost:8000`,
+`VITE_USE_MOCKS=false`, and `VITE_GITHUB_LIVE=true`.
 
 ## Connect GitHub (pick one mode in `server/.env`)
 
-**OAuth, "Sign in with GitHub" (recommended for dev).** At github.com/settings/developers create a **New OAuth App** with Homepage URL `http://localhost:5173` and Authorization callback URL `http://localhost:8000/integrations/github/oauth/callback`. Put its Client ID and a generated Client secret in `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET`, then restart the server. The dashboard button becomes **Sign in with GitHub** and sends you to github.com. The user token (scope `repo`) is stored server-side in SQLite.
+**OAuth, "Sign in with GitHub".** At github.com/settings/developers create a **New OAuth App** with Homepage URL `http://localhost:5173` and Authorization callback URL `http://localhost:8000/integrations/github/oauth/callback`. Put its Client ID and a generated Client secret in `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET`, then restart the server.
 
-**Personal access token (no browser login).** Set `GITHUB_TOKEN` (classic: `repo` scope; fine-grained: Contents and Pull requests read/write). Click **Connect GitHub** in the dashboard and your repos appear.
+**Personal access token (easiest locally).** Open **GitHub** in the dashboard, click
+**Open GitHub token page**, create a fine-grained token with Contents and Pull
+requests read/write, paste it into the form, and connect. The token is submitted
+directly to FastAPI and is never saved in browser storage or returned by the API.
 
 **GitHub App (production).** Create an app at github.com/settings/apps with Contents (RW), Pull requests (RW) and Metadata (R). Set its **Setup URL** to `http://localhost:8000/integrations/github/callback`, then fill `GITHUB_APP_ID`, `GITHUB_APP_SLUG`, `GITHUB_APP_PRIVATE_KEY` (or `_PATH`) and `STATE_SECRET`. Connect sends you to github.com to install the app, then back to the dashboard.
 
@@ -31,7 +37,8 @@ Priority if several are set: App, then OAuth, then token. Secrets live only in `
 | Method | Route | Purpose |
 |---|---|---|
 | GET | `/integrations/github` | Connection status and live repo list |
-| POST | `/integrations/github/connect` | Token: connect now. OAuth/App: returns `install_url` to redirect to |
+| POST | `/integrations/github/connect` | Server token: connect. OAuth/App: return `install_url` |
+| POST | `/integrations/github/token` | Validate and store a token pasted in the dashboard |
 | GET | `/integrations/github/callback` | App install redirect target |
 | GET | `/integrations/github/oauth/callback` | OAuth redirect target |
 | PATCH | `/integrations/github/repos` | Enable or disable PRs on a repo |
@@ -45,6 +52,11 @@ Priority if several are set: App, then OAuth, then token. Secrets live only in `
 | POST | `/sites` | Add a site: `{url, repo?}` (bare domains get https://, duplicates rejected) |
 | DELETE | `/sites/{id}` | Stop tracking a site |
 | GET | `/health` | Liveness and active GitHub mode |
+| POST | `/scans/import` | Import and validate candidate accessibility fixes |
+| GET | `/scans/{id}` | Fixes screen data: scan, issues, fixes, summary, PR |
+| PATCH | `/scans/{id}/fixes/{fix_id}` | Include or exclude a validated fix |
+| POST | `/scans/{id}/ship` | Revalidate and open one atomic GitHub PR |
+| GET | `/pull-requests` | Persisted PRs for the Pull Requests screen |
 
 ## Limits
 
@@ -52,6 +64,7 @@ Priority if several are set: App, then OAuth, then token. Secrets live only in `
 - `scope: site` follows up to `MAX_SITE_PAGES` same-origin links from the first page.
 - `ALLOW_PRIVATE_TARGETS=true` lets scans hit localhost and private addresses. Turn it off when deployed.
 - One connection for the whole server: there is no user login yet.
+- GitHub tokens are stored server-side in PostgreSQL. Add application-level secret encryption before a public deployment.
 - The repo toggle is stored, but nothing opens PRs yet. That arrives with `POST /scans/{id}/ship`.
 - Verified against the real GitHub API only for the error path (a bad token returns "Bad credentials"). The OAuth redirect and callback are unit-tested with mocks; a full sign-in needs your OAuth App credentials and has not been run here.
 - The OAuth token is stored unencrypted in the local SQLite file (git-ignored). Encrypt it before deploying.

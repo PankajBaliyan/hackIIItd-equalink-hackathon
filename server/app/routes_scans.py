@@ -1,5 +1,6 @@
 import asyncio
 import json
+import re
 import secrets
 from collections.abc import AsyncIterator
 from datetime import datetime
@@ -7,7 +8,7 @@ from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlmodel import Session, select
 
 from app import pipeline
@@ -30,6 +31,18 @@ class ScanIn(BaseModel):
     auto_ship: bool = False
 
 
+class ShipIn(BaseModel):
+    fix_ids: list[str] | None = Field(default=None, max_length=100)
+
+
+def fixes_service():
+    try:
+        from fixes.main import app as fixes_app
+    except ImportError:
+        from server.fixes.main import app as fixes_app
+    return fixes_app
+
+
 def _iso(dt: datetime) -> str:
     return dt.replace(tzinfo=None).isoformat() + "Z"  # stored as UTC
 
@@ -37,7 +50,7 @@ def _iso(dt: datetime) -> str:
 def scan_out(s: Scan) -> dict:
     out = {
         "id": s.id, "url": s.url, "mode": s.mode, "level": s.level, "scope": s.scope,
-        "status": s.status, "created_at": _iso(s.created_at),
+        "status": s.status, "created_at": _iso(s.created_at), "repo": s.repo,
     }
     if s.score_before is not None:
         out["score_before"] = s.score_before
@@ -46,9 +59,19 @@ def scan_out(s: Scan) -> dict:
     return out
 
 
+GITHUB_REPO_URL = re.compile(r"^https?://(?:www\.)?github\.com/([\w.-]+/[\w.-]+?)(?:\.git)?(?:/.*)?$", re.I)
+
+
 @router.post("", status_code=201)
 async def create_scan(body: ScanIn, db: SessionDep, settings: SettingsDep):
     url = normalize_url(body.url)
+    if match := GITHUB_REPO_URL.match(url):
+        # A github.com address is a repository, not a website: read its HTML through the GitHub API
+        # (the repository must be switched on) and build validated fixes, instead of crawling github.com.
+        from fixes.models import RepoScanInput
+
+        detail = await fixes_service().state.scan_repo(RepoScanInput(repo=match.group(1), level=body.level))
+        return detail["scan"] if isinstance(detail, dict) else detail.scan.model_dump()
     pipeline.check_target(settings, url)
     repo = (body.repo or "").strip() or None
     if repo and not REPO_RE.match(repo):
@@ -65,22 +88,28 @@ async def create_scan(body: ScanIn, db: SessionDep, settings: SettingsDep):
 
 
 @router.get("")
-def list_scans(db: SessionDep):
-    return [scan_out(s) for s in db.exec(select(Scan).order_by(Scan.created_at.desc())).all()]  # type: ignore[attr-defined]
+async def list_scans(db: SessionDep):
+    live = [scan_out(s) for s in db.exec(select(Scan).order_by(Scan.created_at.desc())).all()]  # type: ignore[attr-defined]
+    imported = await fixes_service().state.list_scans()
+    live_ids = {item["id"] for item in live}
+    return live + [item for item in imported if item["id"] not in live_ids]
 
 
 @router.get("/{scan_id}")
-def get_scan(scan_id: str, db: SessionDep):
+async def get_scan(scan_id: str, db: SessionDep):
     scan = db.get(Scan, scan_id)
     if not scan:
-        raise HTTPException(404, "Scan not found.")
+        return await fixes_service().state.get_scan(scan_id)
     issues = db.exec(select(IssueRow).where(IssueRow.scan_id == scan_id)).all()
     return {"scan": scan_out(scan), "issues": [pipeline.issue_dict(i) for i in issues], "fixes": []}
 
 
 @router.post("/{scan_id}/ship")
-def ship(scan_id: str):
-    raise HTTPException(501, "Opening pull requests isn't implemented yet: no automatic fixes exist to ship.")
+async def ship(scan_id: str, db: SessionDep, body: ShipIn = ShipIn()):
+    if db.get(Scan, scan_id):
+        raise HTTPException(501, "This live scan has no generated fixes to ship yet. Import candidate fixes first.")
+    from fixes.models import ShipInput
+    return await fixes_service().state.ship(scan_id, ShipInput(fix_ids=body.fix_ids))
 
 
 @router.get("/{scan_id}/events")
@@ -90,7 +119,7 @@ async def events(
     """Server-Sent Events: tails the scan's event log until a terminal stage."""
     with Session(engine()) as db:
         if not db.get(Scan, scan_id):
-            raise HTTPException(404, "Scan not found.")
+            return await fixes_service().state.events(scan_id)
     cursor = int(last_event_id) if last_event_id and last_event_id.isdigit() else 0
 
     async def stream() -> AsyncIterator[str]:
