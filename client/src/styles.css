@@ -1,0 +1,227 @@
+@import "tailwindcss" source(none);
+@source "../src";
+@import "tw-animate-css";
+
+/* Themes: dark is default (:root). Light via [data-theme="light"].
+   The no-flash script in __root sets data-theme before paint (system pref fallback). */
+@custom-variant dark (&:where(:root:not([data-theme="light"]), :root:not([data-theme="light"]) *));
+@custom-variant light (&:where([data-theme="light"], [data-theme="light"] *));
+
+:root {
+  color-scheme: dark;
+  --bg: #0a0b10;
+  --surface: #11131a;
+  --surface-2: #181b25;
+  --border-c: #262a37;
+  --text: #e8eaf2;
+  --muted-c: #9aa1b5;
+  /* AA: spec #6366F1 gives 4.47:1 with white — adjusted to #5558E8 (≈5.0:1). */
+  --accent-c: #5558e8;
+  --accent-fg: #ffffff;
+  --accent-2: #22d3ee;
+  --ring-c: #818cf8;
+  --critical: #f87171;
+  --serious: #fb923c;
+  --moderate: #fbbf24;
+  --minor: #60a5fa;
+  --success: #34d399;
+  --glow: color-mix(in oklab, var(--accent-c) 22%, transparent);
+  --dot: color-mix(in oklab, var(--text) 7%, transparent);
+
+  --radius: 0.625rem; /* 10px */
+  --radius-chip: 8px;
+  --radius-card: 14px;
+  --dur-fast: 150ms;
+  --dur-base: 220ms;
+  --dur-slow: 300ms;
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --shadow-soft: 0 1px 0 0 color-mix(in oklab, var(--text) 4%, transparent) inset,
+    0 1px 2px rgb(0 0 0 / 0.25), 0 8px 24px -12px rgb(0 0 0 / 0.45);
+  --gradient-brand: linear-gradient(135deg, var(--accent-c), var(--accent-2));
+}
+
+[data-theme="light"] {
+  color-scheme: light;
+  --bg: #f7f8fb;
+  --surface: #ffffff;
+  --surface-2: #eef0f6;
+  --border-c: #e1e4ee;
+  --text: #11131a;
+  --muted-c: #545b70;
+  --accent-c: #4f46e5;
+  --accent-fg: #ffffff;
+  --accent-2: #0891b2;
+  --ring-c: #4f46e5;
+  --critical: #b91c1c;
+  --serious: #c2410c;
+  --moderate: #92400e;
+  --minor: #1d4ed8;
+  --success: #047857;
+  --glow: color-mix(in oklab, var(--accent-c) 12%, transparent);
+  --dot: color-mix(in oklab, var(--text) 8%, transparent);
+  --shadow-soft: 0 1px 2px rgb(17 19 26 / 0.06), 0 8px 24px -12px rgb(17 19 26 / 0.12);
+}
+
+/* shadcn compatibility mapping */
+:root,
+[data-theme="light"] {
+  --background: var(--bg);
+  --foreground: var(--text);
+  --card: var(--surface);
+  --card-foreground: var(--text);
+  --popover: var(--surface);
+  --popover-foreground: var(--text);
+  --primary: var(--accent-c);
+  --primary-foreground: var(--accent-fg);
+  --secondary: var(--surface-2);
+  --secondary-foreground: var(--text);
+  --muted: var(--surface-2);
+  --muted-foreground: var(--muted-c);
+  --accent: var(--surface-2);
+  --accent-foreground: var(--text);
+  --destructive: var(--critical);
+  --destructive-foreground: var(--bg);
+  --border: var(--border-c);
+  --input: var(--border-c);
+  --ring: var(--ring-c);
+}
+
+@theme inline {
+  --font-sans: "Geist Variable", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "Geist Mono Variable", ui-monospace, monospace;
+
+  --text-xs: 0.75rem;
+  --text-sm: 0.875rem;
+  --text-base: 1rem;
+  --text-lg: 1.125rem;
+  --text-xl: 1.25rem;
+  --text-2xl: 1.5rem;
+  --text-3xl: clamp(1.75rem, 3vw, 2.25rem);
+  --text-3xl--line-height: 1.2;
+  --text-4xl: clamp(2.125rem, 5vw, 3.5rem);
+  --text-4xl--line-height: 1.1;
+
+  --radius-sm: var(--radius-chip);
+  --radius-md: var(--radius);
+  --radius-lg: var(--radius);
+  --radius-xl: var(--radius-card);
+  --radius-card: var(--radius-card);
+  --radius-chip: var(--radius-chip);
+
+  --shadow-soft: var(--shadow-soft);
+
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-text: var(--text);
+  --color-muted: var(--muted-c);
+  --color-brand: var(--accent-c);
+  --color-brand-fg: var(--accent-fg);
+  --color-brand-2: var(--accent-2);
+  --color-critical: var(--critical);
+  --color-serious: var(--serious);
+  --color-moderate: var(--moderate);
+  --color-minor: var(--minor);
+  --color-success: var(--success);
+
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  --ease-out: var(--ease-out);
+}
+
+@utility bg-brand-gradient {
+  background-image: var(--gradient-brand);
+}
+@utility text-brand-gradient {
+  background-image: var(--gradient-brand);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+@utility tabular {
+  font-variant-numeric: tabular-nums;
+}
+@utility duration-fast {
+  transition-duration: var(--dur-fast);
+}
+@utility duration-base {
+  transition-duration: var(--dur-base);
+}
+
+@layer base {
+  * {
+    border-color: var(--color-border);
+  }
+  html {
+    -webkit-text-size-adjust: 100%;
+    overflow-x: hidden;
+  }
+  body {
+    font-family: var(--font-sans);
+    line-height: 1.5;
+    color: var(--text);
+    background-color: var(--bg);
+    background-image:
+      radial-gradient(60rem 28rem at 50% -10%, var(--glow), transparent 70%),
+      radial-gradient(var(--dot) 1px, transparent 1px);
+    background-size: 100% 100%, 22px 22px;
+    background-attachment: fixed;
+    -webkit-font-smoothing: antialiased;
+  }
+  h1, h2, h3, h4 {
+    line-height: 1.2;
+    font-weight: 600;
+    letter-spacing: -0.015em;
+  }
+  :focus-visible {
+    outline: 2px solid var(--ring-c);
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+  .skip-link {
+    position: fixed;
+    left: 1rem;
+    top: -4rem;
+    z-index: 100;
+    padding: 0.625rem 1rem;
+    border-radius: var(--radius);
+    background: var(--accent-c);
+    color: var(--accent-fg);
+    font-weight: 500;
+    transition: top var(--dur-fast) var(--ease-out);
+  }
+  .skip-link:focus {
+    top: 1rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --dur-fast: 1ms;
+    --dur-base: 1ms;
+    --dur-slow: 1ms;
+  }
+  *, *::before, *::after {
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 1ms !important;
+    scroll-behavior: auto !important;
+  }
+}
