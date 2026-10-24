@@ -31,6 +31,36 @@ class Site(SQLModel, table=True):
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
+class RuleDoc(SQLModel, table=True):
+    """A reference document (e.g. a W3C/WCAG rule page). Added by hand or by an agent via the API."""
+
+    __tablename__ = "ruledoc"
+
+    id: int | None = Field(default=None, primary_key=True)
+    title: str
+    source_url: str | None = Field(default=None, index=True)  # where the content came from, if anywhere
+    content: str
+    origin: str = "manual"  # "manual" | "w3c-sync"
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class RuleSync(SQLModel, table=True):
+    """One run of the W3C rules sync. The newest finished run decides when the next one is due."""
+
+    __tablename__ = "rulesync"
+
+    id: int | None = Field(default=None, primary_key=True)
+    trigger: str  # "schedule" | "manual"
+    status: str = "running"  # running | done | failed
+    received: int = 0  # rules the agent returned
+    added: int = 0
+    skipped: int = 0  # duplicates of stored docs, or malformed
+    error: str | None = None
+    tinyfish_run_id: str | None = None
+    started_at: datetime
+    finished_at: datetime | None = None
+
+
 class Scan(SQLModel, table=True):
     id: str = Field(primary_key=True)
     url: str

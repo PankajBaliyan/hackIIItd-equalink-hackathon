@@ -121,3 +121,30 @@ export interface Site {
   repo: string | null;
   created_at: string;
 }
+
+/** A reference document (e.g. a W3C rule page), stored by the server. */
+export interface RuleDoc {
+  id: number;
+  title: string;
+  /** One URL, or several separated by ", ". */
+  source_url: string | null;
+  content: string;
+  /** "manual" or "w3c-sync". */
+  origin: string;
+  created_at: string;
+}
+
+/** Outcome of the latest W3C rules sync, and whether the next one is scheduled. */
+export interface RuleSyncStatus {
+  configured: boolean;
+  scheduled: boolean;
+  status: "running" | "done" | "failed" | null;
+  trigger: "schedule" | "manual" | null;
+  received: number;
+  added: number;
+  skipped: number;
+  error: string | null;
+  started_at: string | null;
+  finished_at: string | null;
+  next_run_at: string | null;
+}

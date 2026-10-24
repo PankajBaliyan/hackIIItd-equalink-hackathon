@@ -13,6 +13,8 @@ const ROUTES = [
   "/integrations/ci",
   "/settings",
   "/docs",
+  "/docs/api",
+  "/docs/reference",
   "/_design",
   "/does-not-exist",
 ];

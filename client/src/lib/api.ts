@@ -8,6 +8,8 @@ import type {
   PullRequest,
   GithubStatus,
   Site,
+  RuleDoc,
+  RuleSyncStatus,
 } from "@/lib/types";
 
 export const API_BASE_URL: string =
@@ -113,5 +115,20 @@ export const sitesApi = {
   async remove(id: number): Promise<void> {
     const res = await fetch(`${API_BASE_URL}/sites/${id}`, { method: "DELETE" });
     if (!res.ok) throw new ApiError(res.status, "Couldn't remove the site.");
+  },
+};
+
+export type RuleDocInput = { title: string; content: string; source_url?: string };
+
+/** Reference documents always use the real server. POST takes a list so several can be added at once. */
+export const ruleDocsApi = {
+  list: () => request<RuleDoc[]>("/rule-docs"),
+  create: (input: RuleDocInput[]) =>
+    request<RuleDoc[]>("/rule-docs", { method: "POST", body: JSON.stringify(input) }),
+  syncStatus: () => request<RuleSyncStatus>("/rule-docs/sync"),
+  startSync: () => request<RuleSyncStatus>("/rule-docs/sync", { method: "POST" }),
+  async remove(id: number): Promise<void> {
+    const res = await fetch(`${API_BASE_URL}/rule-docs/${id}`, { method: "DELETE" });
+    if (!res.ok) throw new ApiError(res.status, "Couldn't remove the document.");
   },
 };

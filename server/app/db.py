@@ -20,10 +20,14 @@ def engine():
 def init_db() -> None:
     SQLModel.metadata.create_all(engine())
     # create_all never alters existing tables; add columns introduced after the first release.
-    cols = {c["name"] for c in inspect(engine()).get_columns("githubconnection")}
+    insp = inspect(engine())
+    cols = {c["name"] for c in insp.get_columns("githubconnection")}
     if "access_token" not in cols:
         with engine().begin() as conn:
             conn.execute(text("ALTER TABLE githubconnection ADD COLUMN access_token VARCHAR"))
+    if "origin" not in {c["name"] for c in insp.get_columns("ruledoc")}:
+        with engine().begin() as conn:
+            conn.execute(text("ALTER TABLE ruledoc ADD COLUMN origin VARCHAR NOT NULL DEFAULT 'manual'"))
 
 
 def get_session() -> Iterator[Session]:

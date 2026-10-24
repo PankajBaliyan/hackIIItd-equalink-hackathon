@@ -17,6 +17,13 @@ class Settings(BaseSettings):
     allow_private_targets: bool = True
     max_site_pages: int = 5
 
+    # W3C rules sync: a TinyFish agent fetches the latest W3C accessibility rules into the reference docs.
+    tinyfish_api_key: str = ""
+    w3c_sync_url: str = "https://www.w3.org/TR/"
+    w3c_sync_interval_days: int = 30
+    w3c_sync_timeout_seconds: int = 1800
+    w3c_sync_schedule: bool = True  # false: only the "Sync now" button runs it
+
     github_client_id: str = ""
     github_client_secret: str = ""
     github_token: str = ""

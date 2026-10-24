@@ -17,6 +17,9 @@ import { Route as PullRequestsRouteImport } from './routes/pull-requests'
 import { Route as ReportsRouteImport } from './routes/reports'
 import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as SitesRouteImport } from './routes/sites'
+import { Route as DocsIndexRouteImport } from './routes/docs.index'
+import { Route as DocsApiRouteImport } from './routes/docs.api'
+import { Route as DocsReferenceRouteImport } from './routes/docs.reference'
 import { Route as IntegrationsCiRouteImport } from './routes/integrations.ci'
 import { Route as IntegrationsGithubRouteImport } from './routes/integrations.github'
 import { Route as ScansIdIndexRouteImport } from './routes/scans.$id.index'
@@ -62,6 +65,21 @@ const SitesRoute = SitesRouteImport.update({
   path: '/sites',
   getParentRoute: () => rootRouteImport,
 } as any)
+const DocsIndexRoute = DocsIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => DocsRoute,
+} as any)
+const DocsApiRoute = DocsApiRouteImport.update({
+  id: '/api',
+  path: '/api',
+  getParentRoute: () => DocsRoute,
+} as any)
+const DocsReferenceRoute = DocsReferenceRouteImport.update({
+  id: '/reference',
+  path: '/reference',
+  getParentRoute: () => DocsRoute,
+} as any)
 const IntegrationsCiRoute = IntegrationsCiRouteImport.update({
   id: '/integrations/ci',
   path: '/integrations/ci',
@@ -86,28 +104,33 @@ const ScansIdFixesRoute = ScansIdFixesRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/_design': typeof DesignRoute
-  '/docs': typeof DocsRoute
+  '/docs': typeof DocsRouteWithChildren
   '/history': typeof HistoryRoute
   '/pull-requests': typeof PullRequestsRoute
   '/reports': typeof ReportsRoute
   '/settings': typeof SettingsRoute
   '/sites': typeof SitesRoute
+  '/docs/api': typeof DocsApiRoute
+  '/docs/reference': typeof DocsReferenceRoute
   '/integrations/ci': typeof IntegrationsCiRoute
   '/integrations/github': typeof IntegrationsGithubRoute
+  '/docs/': typeof DocsIndexRoute
   '/scans/$id/fixes': typeof ScansIdFixesRoute
   '/scans/$id/': typeof ScansIdIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/_design': typeof DesignRoute
-  '/docs': typeof DocsRoute
   '/history': typeof HistoryRoute
   '/pull-requests': typeof PullRequestsRoute
   '/reports': typeof ReportsRoute
   '/settings': typeof SettingsRoute
   '/sites': typeof SitesRoute
+  '/docs/api': typeof DocsApiRoute
+  '/docs/reference': typeof DocsReferenceRoute
   '/integrations/ci': typeof IntegrationsCiRoute
   '/integrations/github': typeof IntegrationsGithubRoute
+  '/docs': typeof DocsIndexRoute
   '/scans/$id/fixes': typeof ScansIdFixesRoute
   '/scans/$id': typeof ScansIdIndexRoute
 }
@@ -115,14 +138,17 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/_design': typeof DesignRoute
-  '/docs': typeof DocsRoute
+  '/docs': typeof DocsRouteWithChildren
   '/history': typeof HistoryRoute
   '/pull-requests': typeof PullRequestsRoute
   '/reports': typeof ReportsRoute
   '/settings': typeof SettingsRoute
   '/sites': typeof SitesRoute
+  '/docs/api': typeof DocsApiRoute
+  '/docs/reference': typeof DocsReferenceRoute
   '/integrations/ci': typeof IntegrationsCiRoute
   '/integrations/github': typeof IntegrationsGithubRoute
+  '/docs/': typeof DocsIndexRoute
   '/scans/$id/fixes': typeof ScansIdFixesRoute
   '/scans/$id/': typeof ScansIdIndexRoute
 }
@@ -137,22 +163,27 @@ export interface FileRouteTypes {
     | '/reports'
     | '/settings'
     | '/sites'
+    | '/docs/api'
+    | '/docs/reference'
     | '/integrations/ci'
     | '/integrations/github'
+    | '/docs/'
     | '/scans/$id/fixes'
     | '/scans/$id/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
     | '/_design'
-    | '/docs'
     | '/history'
     | '/pull-requests'
     | '/reports'
     | '/settings'
     | '/sites'
+    | '/docs/api'
+    | '/docs/reference'
     | '/integrations/ci'
     | '/integrations/github'
+    | '/docs'
     | '/scans/$id/fixes'
     | '/scans/$id'
   id:
@@ -165,8 +196,11 @@ export interface FileRouteTypes {
     | '/reports'
     | '/settings'
     | '/sites'
+    | '/docs/api'
+    | '/docs/reference'
     | '/integrations/ci'
     | '/integrations/github'
+    | '/docs/'
     | '/scans/$id/fixes'
     | '/scans/$id/'
   fileRoutesById: FileRoutesById
@@ -174,7 +208,7 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   DesignRoute: typeof DesignRoute
-  DocsRoute: typeof DocsRoute
+  DocsRoute: typeof DocsRouteWithChildren
   HistoryRoute: typeof HistoryRoute
   PullRequestsRoute: typeof PullRequestsRoute
   ReportsRoute: typeof ReportsRoute
@@ -244,6 +278,27 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SitesRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/docs/': {
+      id: '/docs/'
+      path: '/'
+      fullPath: '/docs/'
+      preLoaderRoute: typeof DocsIndexRouteImport
+      parentRoute: typeof DocsRoute
+    }
+    '/docs/api': {
+      id: '/docs/api'
+      path: '/api'
+      fullPath: '/docs/api'
+      preLoaderRoute: typeof DocsApiRouteImport
+      parentRoute: typeof DocsRoute
+    }
+    '/docs/reference': {
+      id: '/docs/reference'
+      path: '/reference'
+      fullPath: '/docs/reference'
+      preLoaderRoute: typeof DocsReferenceRouteImport
+      parentRoute: typeof DocsRoute
+    }
     '/integrations/ci': {
       id: '/integrations/ci'
       path: '/integrations/ci'
@@ -275,10 +330,24 @@ declare module '@tanstack/react-router' {
   }
 }
 
+interface DocsRouteChildren {
+  DocsApiRoute: typeof DocsApiRoute
+  DocsReferenceRoute: typeof DocsReferenceRoute
+  DocsIndexRoute: typeof DocsIndexRoute
+}
+
+const DocsRouteChildren: DocsRouteChildren = {
+  DocsApiRoute: DocsApiRoute,
+  DocsReferenceRoute: DocsReferenceRoute,
+  DocsIndexRoute: DocsIndexRoute,
+}
+
+const DocsRouteWithChildren = DocsRoute._addFileChildren(DocsRouteChildren)
+
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   DesignRoute: DesignRoute,
-  DocsRoute: DocsRoute,
+  DocsRoute: DocsRouteWithChildren,
   HistoryRoute: HistoryRoute,
   PullRequestsRoute: PullRequestsRoute,
   ReportsRoute: ReportsRoute,

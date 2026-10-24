@@ -55,3 +55,13 @@ Priority if several are set: App, then OAuth, then token. Secrets live only in `
 - The repo toggle is stored, but nothing opens PRs yet. That arrives with `POST /scans/{id}/ship`.
 - Verified against the real GitHub API only for the error path (a bad token returns "Bad credentials"). The OAuth redirect and callback are unit-tested with mocks; a full sign-in needs your OAuth App credentials and has not been run here.
 - The OAuth token is stored unencrypted in the local SQLite file (git-ignored). Encrypt it before deploying.
+
+
+## W3C rules sync
+
+`Docs > Reference documents` can fill itself from a TinyFish agent that researches the latest W3C/WCAG rules.
+
+- Set `TINYFISH_API_KEY` in `.env`. `POST /rule-docs/sync` (the **Sync now** button) starts a run in the background; `GET /rule-docs/sync` reports progress and the outcome.
+- The first run is started by a person. After a successful run the server repeats it every `W3C_SYNC_INTERVAL_DAYS` (default 30) while it is up; set `W3C_SYNC_SCHEDULE=false` to disable that. A failed run is retried after a day.
+- **No duplicates:** a returned rule is stored only if no existing doc has the same WCAG success criterion (for example `1.4.3`) or the same normalized title. Stored rules are also listed in the agent's goal so it can skip them. A run that finds nothing new is a success.
+- The agent prompt lives in `app/prompts/w3c_rules.md`. Each run uses TinyFish credits.
