@@ -1,100 +1,204 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useQuery } from "@tanstack/react-query";
-import { Globe } from "lucide-react";
-import { useMemo } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { ExternalLink, Github, Globe, Trash2 } from "lucide-react";
+import { useState } from "react";
+import type { FormEvent } from "react";
+import { toast } from "sonner";
 
+import { parseScanUrl } from "@/components/scan/ScanForm";
 import { FocusHeading } from "@/components/shell/PagePlaceholder";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Reveal } from "@/components/ui/reveal";
 import { Skeleton } from "@/components/ui/skeleton";
-import { getApi } from "@/lib/api";
-import type { Scan } from "@/lib/types";
+import { TextField } from "@/components/ui/text-field";
+import { sitesApi } from "@/lib/api";
+import type { Site } from "@/lib/types";
+import { useGithub } from "@/lib/useGithub";
 
 export const Route = createFileRoute("/sites")({
   head: () => ({
     meta: [
       { title: "Sites · EquaLink" },
-      {
-        name: "description",
-        content: "Every site you've scanned with EquaLink, with score trends.",
-      },
+      { name: "description", content: "The websites you track with EquaLink." },
       { property: "og:title", content: "Sites · EquaLink" },
-      {
-        property: "og:description",
-        content: "Every site you've scanned with EquaLink, with score trends.",
-      },
+      { property: "og:description", content: "The websites you track with EquaLink." },
     ],
   }),
   component: Page,
 });
 
-interface Site {
-  host: string;
-  scans: Scan[]; // newest first
+const KEY = ["sites"];
+const errMsg = (e: unknown) => (e instanceof Error ? e.message : undefined);
+
+function AddSite() {
+  const qc = useQueryClient();
+  const { data: gh } = useGithub();
+  const repos = gh?.connected ? gh.repos.filter((r) => r.enabled) : [];
+  const [url, setUrl] = useState("");
+  const [repo, setRepo] = useState("");
+  const [error, setError] = useState<string>();
+
+  const add = useMutation({
+    mutationFn: (v: { url: string; repo?: string }) => sitesApi.create(v),
+    onSuccess: (site) => {
+      void qc.invalidateQueries({ queryKey: KEY });
+      setUrl("");
+      setRepo("");
+      toast.success(`Added ${site.host}`);
+    },
+    onError: (e) => setError(errMsg(e) ?? "Couldn't add the site."),
+  });
+
+  const submit = (e: FormEvent) => {
+    e.preventDefault();
+    const parsed = parseScanUrl(url);
+    if ("error" in parsed) return setError(parsed.error);
+    setError(undefined);
+    add.mutate({ url: parsed.url, ...(repo && { repo }) });
+  };
+
+  return (
+    <form
+      onSubmit={submit}
+      noValidate
+      aria-label="Add a site"
+      className="grid gap-4 rounded-card border bg-surface p-5 sm:grid-cols-[1fr_16rem_auto] sm:items-start"
+    >
+      <TextField
+        label="Website URL"
+        type="url"
+        inputMode="url"
+        spellCheck={false}
+        placeholder="https://shopeasy.dev"
+        value={url}
+        error={error}
+        onChange={(e) => {
+          setUrl(e.target.value);
+          if (error) setError(undefined);
+        }}
+      />
+      <label className="space-y-1.5 text-sm font-medium">
+        <span className="block">GitHub repo (optional)</span>
+        <select
+          value={repo}
+          onChange={(e) => setRepo(e.target.value)}
+          disabled={repos.length === 0}
+          className="min-h-11 w-full rounded-md border bg-surface px-2 text-base font-normal focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50 sm:min-h-10 sm:text-sm"
+        >
+          <option value="">{repos.length ? "None" : "Enable a repo on the GitHub page"}</option>
+          {repos.map((r) => (
+            <option key={r.full_name} value={r.full_name}>
+              {r.full_name}
+            </option>
+          ))}
+        </select>
+      </label>
+      <Button type="submit" variant="primary" loading={add.isPending} className="sm:mt-[1.625rem]">
+        Add site
+      </Button>
+    </form>
+  );
 }
 
-const hostOf = (url: string) => {
-  try {
-    return new URL(url).hostname.replace(/^www\./, "");
-  } catch {
-    return url;
-  }
-};
-const finalScore = (s: Scan) => s.score_after ?? s.score_before;
-
-/** Decorative trend line (oldest → newest); the numbers beside it carry the meaning. */
-function Sparkline({ values }: { values: number[] }) {
-  if (values.length < 2) return null;
-  const w = 96;
-  const h = 28;
-  const pts = values
-    .map(
-      (v, i) => `${(i / (values.length - 1)) * w},${h - (Math.max(0, Math.min(100, v)) / 100) * h}`,
-    )
-    .join(" ");
+function SiteCard({ site, onRemove }: { site: Site; onRemove: (s: Site) => void }) {
   return (
-    <svg aria-hidden viewBox={`0 0 ${w} ${h}`} className="h-7 w-24 text-brand">
-      <polyline
-        points={pts}
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="2"
-        strokeLinejoin="round"
-        strokeLinecap="round"
-      />
-    </svg>
+    <article className="space-y-3 rounded-card border bg-surface p-5 shadow-soft">
+      <header className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <h2 className="break-all text-lg font-semibold">{site.host}</h2>
+          <a
+            href={site.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex max-w-full items-center gap-1 text-sm text-muted hover:text-text"
+          >
+            <span className="truncate font-mono">{site.url}</span>
+            <ExternalLink aria-hidden className="size-3 shrink-0" />
+            <span className="sr-only"> (opens in a new tab)</span>
+          </a>
+        </div>
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={() => onRemove(site)}
+          aria-label={`Remove ${site.host}`}
+        >
+          <Trash2 />
+        </Button>
+      </header>
+      <dl className="space-y-1 text-sm">
+        <div className="flex gap-2">
+          <dt className="text-muted">Repository</dt>
+          <dd>
+            {site.repo ? (
+              <a
+                href={`https://github.com/${site.repo}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1 font-mono text-brand underline underline-offset-2"
+              >
+                <Github aria-hidden className="size-3.5" />
+                {site.repo}
+                <span className="sr-only"> (opens in a new tab)</span>
+              </a>
+            ) : (
+              <span className="text-muted">Not linked</span>
+            )}
+          </dd>
+        </div>
+        <div className="flex gap-2">
+          <dt className="text-muted">Added</dt>
+          <dd>
+            <time dateTime={site.created_at}>
+              {new Date(site.created_at).toLocaleDateString(undefined, { dateStyle: "medium" })}
+            </time>
+          </dd>
+        </div>
+        <div className="flex gap-2">
+          <dt className="text-muted">Last scan</dt>
+          <dd className="text-muted">Not scanned yet</dd>
+        </div>
+      </dl>
+      <Button variant="secondary" size="sm" asChild>
+        <Link to="/" search={{ url: site.url, ...(site.repo && { repo: site.repo }) }}>
+          Scan this site<span className="sr-only">: {site.host}</span>
+        </Link>
+      </Button>
+    </article>
   );
 }
 
 function Page() {
-  const { data, isPending, isError, refetch } = useQuery({
-    queryKey: ["scans"],
-    queryFn: async () => (await getApi()).listScans(),
-  });
+  const qc = useQueryClient();
+  const { data, isPending, isError, refetch } = useQuery({ queryKey: KEY, queryFn: sitesApi.list });
+  const [removing, setRemoving] = useState<Site | null>(null);
 
-  const sites = useMemo<Site[]>(() => {
-    const m = new Map<string, Scan[]>();
-    for (const s of data ?? []) m.set(hostOf(s.url), [...(m.get(hostOf(s.url)) ?? []), s]);
-    return [...m.entries()]
-      .map(([host, scans]) => ({
-        host,
-        scans: scans.sort((a, b) => b.created_at.localeCompare(a.created_at)),
-      }))
-      .sort((a, b) => b.scans[0]!.created_at.localeCompare(a.scans[0]!.created_at));
-  }, [data]);
+  const remove = useMutation({
+    mutationFn: (id: number) => sitesApi.remove(id),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: KEY }),
+    onError: (e) => toast.error("Couldn't remove the site", { description: errMsg(e) }),
+    onSettled: () => setRemoving(null),
+  });
 
   return (
     <div className="mx-auto max-w-5xl space-y-6">
-      <div className="flex flex-wrap items-end justify-between gap-3">
-        <div className="space-y-1">
-          <FocusHeading className="text-3xl font-semibold outline-none">Sites</FocusHeading>
-          <p className="text-muted">Every site you've scanned, grouped by domain.</p>
-        </div>
-        <Button variant="primary" asChild>
-          <Link to="/">New scan</Link>
-        </Button>
+      <div className="space-y-1">
+        <FocusHeading className="text-3xl font-semibold outline-none">Sites</FocusHeading>
+        <p className="text-muted">The websites you track. Add one, then scan it.</p>
       </div>
+
+      <AddSite />
 
       {isPending ? (
         <div role="status" aria-label="Loading sites" className="grid gap-4 sm:grid-cols-2">
@@ -105,89 +209,45 @@ function Page() {
       ) : isError ? (
         <EmptyState
           title="Couldn't load sites"
-          description="Check that the API is reachable."
+          description="Is the server running on port 8000?"
           action={
             <Button variant="secondary" onClick={() => void refetch()}>
               Retry
             </Button>
           }
         />
-      ) : sites.length === 0 ? (
+      ) : data.length === 0 ? (
         <EmptyState
           icon={<Globe className="size-6" />}
           title="No sites yet"
-          description="Scan a URL and its site will show up here."
-          action={
-            <Button variant="primary" asChild>
-              <Link to="/">Start a scan</Link>
-            </Button>
-          }
+          description="Add your first website above to start tracking it."
         />
       ) : (
         <ul className="grid gap-4 sm:grid-cols-2">
-          {sites.map((site, i) => {
-            const latest = site.scans[0]!;
-            const trend = site.scans
-              .map(finalScore)
-              .filter((v): v is number => v != null)
-              .reverse();
-            const first = trend[0];
-            const last = trend[trend.length - 1];
-            const delta =
-              first != null && last != null && trend.length > 1 ? last - first : undefined;
-            return (
-              <Reveal key={site.host} index={i}>
-                <article className="space-y-3 rounded-card border bg-surface p-5 shadow-soft">
-                  <header className="flex items-start justify-between gap-3">
-                    <h2 className="break-all text-lg font-semibold">{site.host}</h2>
-                    <p className="tabular text-3xl font-semibold">
-                      {last ?? "–"}
-                      <span className="sr-only"> latest score out of 100</span>
-                    </p>
-                  </header>
-                  <div className="flex items-center justify-between gap-3 text-sm text-muted">
-                    <span className="tabular">
-                      {site.scans.length} {site.scans.length === 1 ? "scan" : "scans"}
-                      {delta != null && (
-                        <span className={delta >= 0 ? "text-success" : "text-critical"}>
-                          {" · "}
-                          {delta >= 0 ? "▲ +" : "▼ "}
-                          {delta} overall
-                        </span>
-                      )}
-                    </span>
-                    <Sparkline values={trend} />
-                  </div>
-                  <p className="text-sm text-muted">
-                    Last scanned{" "}
-                    <time dateTime={latest.created_at}>
-                      {new Date(latest.created_at).toLocaleDateString(undefined, {
-                        dateStyle: "medium",
-                      })}
-                    </time>
-                    {" · "}
-                    WCAG {latest.level}
-                  </p>
-                  <div className="flex flex-wrap gap-2">
-                    <Button variant="secondary" size="sm" asChild>
-                      <Link
-                        to={latest.status === "done" ? "/scans/$id/fixes" : "/scans/$id"}
-                        params={{ id: latest.id }}
-                      >
-                        {latest.status === "done" ? "Latest fixes" : "View scan"}
-                        <span className="sr-only"> for {site.host}</span>
-                      </Link>
-                    </Button>
-                    <Button variant="ghost" size="sm" asChild>
-                      <Link to="/history">All scans</Link>
-                    </Button>
-                  </div>
-                </article>
-              </Reveal>
-            );
-          })}
+          {data.map((site, i) => (
+            <Reveal key={site.id} index={i}>
+              <SiteCard site={site} onRemove={setRemoving} />
+            </Reveal>
+          ))}
         </ul>
       )}
+
+      <AlertDialog open={!!removing} onOpenChange={(o) => !o && setRemoving(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Remove {removing?.host}?</AlertDialogTitle>
+            <AlertDialogDescription>
+              It will stop being tracked. Your website and repository are not touched.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={() => removing && remove.mutate(removing.id)}>
+              Remove
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

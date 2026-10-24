@@ -90,7 +90,7 @@ export interface GithubStatus {
   account?: string;
   repos: GithubRepo[];
   /** Server auth mode: a GitHub App, a personal access token, or not configured. */
-  mode?: "app" | "pat" | "none";
+  mode?: "app" | "oauth" | "pat" | "none";
   /** When set, the user must finish connecting on GitHub (App install). */
   install_url?: string;
 }
@@ -111,4 +111,13 @@ export interface ScanApi {
     onEvent: (e: ScanEvent) => void,
     onConnection?: (s: ConnectionState) => void,
   ): () => void;
+}
+
+/** A tracked website, stored by the server. */
+export interface Site {
+  id: number;
+  url: string;
+  host: string;
+  repo: string | null;
+  created_at: string;
 }

@@ -95,3 +95,56 @@ async def test_github_client_surfaces_api_errors(monkeypatch):
     with pytest.raises(github.GitHubError) as e:
         await github.pat_user("bad")
     assert e.value.status == 401 and "Bad credentials" in e.value.message
+
+
+def oauth_client(client):
+    client.cfg["settings"] = make_settings(github_client_id="cid", github_client_secret="sec")
+    app.dependency_overrides[get_settings] = lambda: client.cfg["settings"]
+
+
+def test_oauth_connect_returns_github_authorize_url(client):
+    oauth_client(client)
+    r = client.post("/integrations/github/connect").json()
+    assert r["connected"] is False and r["mode"] == "oauth"
+    url = r["install_url"]
+    assert url.startswith("https://github.com/login/oauth/authorize?")
+    assert "client_id=cid" in url and "scope=repo" in url
+    assert "oauth%2Fcallback" in url and "state=" in url
+
+
+def test_oauth_callback_stores_token_and_redirects(client, monkeypatch):
+    oauth_client(client)
+
+    async def fake_exchange(s, code):
+        assert code == "abc"
+        return "gho_usertoken"
+
+    monkeypatch.setattr(github, "exchange_code", fake_exchange)
+    state = client.post("/integrations/github/connect").json()["install_url"].split("state=")[1]
+    r = client.get("/integrations/github/oauth/callback", params={"code": "abc", "state": state}, follow_redirects=False)
+    assert r.status_code in (302, 307) and r.headers["location"].endswith("/integrations/github?connected=1")
+    status = client.get("/integrations/github").json()
+    assert status["connected"] and status["account"] == "octocat" and status["mode"] == "oauth"
+    assert "access_token" not in str(status)
+
+
+def test_oauth_callback_rejects_install_state_and_handles_denial(client):
+    oauth_client(client)
+    bad = client.get("/integrations/github/oauth/callback", params={"code": "x", "state": "nope"})
+    assert bad.status_code == 400
+    state = client.post("/integrations/github/connect").json()["install_url"].split("state=")[1]
+    r = client.get(
+        "/integrations/github/oauth/callback", params={"error": "access_denied", "state": state}, follow_redirects=False
+    )
+    assert r.headers["location"].endswith("/integrations/github?error=access_denied")
+
+
+async def test_exchange_code_errors(monkeypatch):
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"error": "bad_verification_code", "error_description": "The code passed is incorrect"})
+
+    real = httpx.AsyncClient
+    monkeypatch.setattr(github.httpx, "AsyncClient", lambda **kw: real(transport=httpx.MockTransport(handler), **kw))
+    with pytest.raises(github.GitHubError) as e:
+        await github.exchange_code(make_settings(github_client_id="c", github_client_secret="s"), "bad")
+    assert "incorrect" in e.value.message
