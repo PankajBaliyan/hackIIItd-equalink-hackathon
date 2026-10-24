@@ -17,10 +17,15 @@ export const Route = createFileRoute("/")({
       },
     ],
   }),
+  validateSearch: (s: Record<string, unknown>): { url?: string; repo?: string } => ({
+    ...(typeof s["url"] === "string" && { url: s["url"] }),
+    ...(typeof s["repo"] === "string" && { repo: s["repo"] }),
+  }),
   component: Page,
 });
 
 function Page() {
+  const search = Route.useSearch();
   return (
     <div className="mx-auto max-w-5xl space-y-12">
       <section className="space-y-6 pt-4 text-center">
@@ -35,7 +40,7 @@ function Page() {
         <PipelineGraphic />
       </section>
       <div className="grid gap-8 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
-        <ScanForm />
+        <ScanForm initialUrl={search.url ?? ""} initialRepo={search.repo ?? ""} />
         <RecentScans />
       </div>
       <TrustStrip />

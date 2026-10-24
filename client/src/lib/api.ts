@@ -7,6 +7,7 @@ import type {
   ScanEvent,
   PullRequest,
   GithubStatus,
+  Site,
 } from "@/lib/types";
 
 export const API_BASE_URL: string =
@@ -103,3 +104,14 @@ export function getApi(): Promise<ScanApi> {
     : Promise.resolve(realApi);
   return cached;
 }
+
+/** Sites always use the real server (there is no mock for them). */
+export const sitesApi = {
+  list: () => request<Site[]>("/sites"),
+  create: (input: { url: string; repo?: string }) =>
+    request<Site>("/sites", { method: "POST", body: JSON.stringify(input) }),
+  async remove(id: number): Promise<void> {
+    const res = await fetch(`${API_BASE_URL}/sites/${id}`, { method: "DELETE" });
+    if (!res.ok) throw new ApiError(res.status, "Couldn't remove the site.");
+  },
+};

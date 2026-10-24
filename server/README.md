@@ -1,6 +1,6 @@
 # EquaLink server
 
-FastAPI backend. Today it implements the **GitHub integration** that powers the dashboard's `/integrations/github` page; scan, fix and ship stages come later (see `Docs/EquaLink-Execution-Plan.md`).
+FastAPI backend. Today it implements the **GitHub integration** (`/integrations/github`) and **Sites** (`/sites`) pages; scan, fix and ship stages come later (see `Docs/EquaLink-Execution-Plan.md`).
 
 ## Run
 
@@ -35,6 +35,9 @@ Priority if several are set: App, then OAuth, then token. Secrets live only in `
 | GET | `/integrations/github/oauth/callback` | OAuth redirect target |
 | PATCH | `/integrations/github/repos` | Enable or disable PRs on a repo |
 | DELETE | `/integrations/github` | Disconnect and clear settings |
+| GET | `/sites` | List tracked sites |
+| POST | `/sites` | Add a site: `{url, repo?}` (bare domains get https://, duplicates rejected) |
+| DELETE | `/sites/{id}` | Stop tracking a site |
 | GET | `/health` | Liveness and active GitHub mode |
 
 ## Limits

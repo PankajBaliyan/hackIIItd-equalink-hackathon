@@ -35,14 +35,20 @@ export function parseScanUrl(raw: string): { url: string } | { error: string } {
 
 const REPO_RE = /^[\w.-]+\/[\w.-]+$/;
 
-export function ScanForm() {
+export function ScanForm({
+  initialUrl = "",
+  initialRepo = "",
+}: {
+  initialUrl?: string;
+  initialRepo?: string;
+}) {
   const navigate = useNavigate();
   const { startScan } = useScanStore();
-  const [url, setUrl] = useState("");
+  const [url, setUrl] = useState(initialUrl);
   const [urlError, setUrlError] = useState<string>();
   const [level, setLevel] = useState<Scan["level"]>("AA");
   const [scope, setScope] = useState<Scan["scope"]>("page");
-  const [repo, setRepo] = useState("");
+  const [repo, setRepo] = useState(initialRepo);
   const [repoError, setRepoError] = useState<string>();
   const [auto, setAuto] = useState(false);
   const [busy, setBusy] = useState(false);

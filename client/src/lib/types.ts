@@ -112,3 +112,12 @@ export interface ScanApi {
     onConnection?: (s: ConnectionState) => void,
   ): () => void;
 }
+
+/** A tracked website, stored by the server. */
+export interface Site {
+  id: number;
+  url: string;
+  host: string;
+  repo: string | null;
+  created_at: string;
+}
