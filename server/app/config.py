@@ -11,6 +11,10 @@ class Settings(BaseSettings):
     database_url: str = "sqlite:///./equalink.db"
     state_secret: str = ""
 
+    server_url: str = "http://localhost:8000"
+
+    github_client_id: str = ""
+    github_client_secret: str = ""
     github_token: str = ""
     github_app_id: str = ""
     github_app_slug: str = ""
@@ -32,10 +36,20 @@ class Settings(BaseSettings):
         return bool(self.github_app_id and self.github_app_slug and self.app_private_key)
 
     @property
+    def oauth_configured(self) -> bool:
+        return bool(self.github_client_id and self.github_client_secret)
+
+    @property
+    def oauth_redirect_uri(self) -> str:
+        return f"{self.server_url.rstrip('/')}/integrations/github/oauth/callback"
+
+    @property
     def github_mode(self) -> str:
-        """'app' (preferred), 'pat', or 'none'."""
+        """'app' (production), 'oauth' ("Sign in with GitHub"), 'pat' (dev token), or 'none'."""
         if self.app_configured:
             return "app"
+        if self.oauth_configured:
+            return "oauth"
         return "pat" if self.github_token else "none"
 
 

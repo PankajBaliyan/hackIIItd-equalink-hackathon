@@ -1,5 +1,7 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { Check, Github, GitPullRequest, ShieldCheck } from "lucide-react";
+import { useEffect } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 
 import { FocusHeading } from "@/components/shell/PagePlaceholder";
@@ -29,11 +31,24 @@ const PERMISSIONS = [
 ];
 
 function Page() {
+  const qc = useQueryClient();
   const { data, isPending, isError, refetch } = useGithub();
+
+  // The server redirects back here after GitHub sign-in with ?connected=1 or ?error=...
+  useEffect(() => {
+    const q = new URLSearchParams(window.location.search);
+    const err = q.get("error");
+    if (!err && !q.get("connected")) return;
+    window.history.replaceState(null, "", window.location.pathname);
+    if (err) toast.error("GitHub sign-in didn't complete", { description: err.replace(/_/g, " ") });
+    else toast.success("GitHub connected");
+    void qc.invalidateQueries({ queryKey: ["github"] });
+  }, [qc]);
   const { pullRequests } = useScanStore();
   const fail = (title: string) => (e: unknown) =>
     toast.error(title, { description: e instanceof Error ? e.message : undefined });
 
+  const redirects = data?.mode === "oauth" || data?.mode === "app";
   const connect = useGithubAction((api) => api.connectGithub());
   const disconnect = useGithubAction((api) => api.disconnectGithub());
   const toggle = useGithubAction((api, name: string, on: boolean) => api.setGithubRepo(name, on));
@@ -70,7 +85,9 @@ function Page() {
             <Github aria-hidden className="size-5" /> Connect GitHub
           </h2>
           <p className="text-sm text-muted">
-            Install the EquaLink GitHub App on the repositories you choose.
+            {redirects
+              ? "You'll be sent to GitHub to sign in and approve access, then returned here."
+              : "Connecting lists the repositories the server's GitHub credentials can push to."}
           </p>
           <ul className="space-y-2 text-sm">
             {PERMISSIONS.map((p) => (
@@ -85,7 +102,11 @@ function Page() {
             loading={connect.isPending}
             onClick={() => connect.mutate([], { onError: fail("Couldn't connect GitHub") })}
           >
-            {connect.isPending ? "Connecting…" : "Connect GitHub"}
+            {connect.isPending
+              ? "Connecting…"
+              : redirects
+                ? "Sign in with GitHub"
+                : "Connect GitHub"}
           </Button>
         </section>
       ) : (

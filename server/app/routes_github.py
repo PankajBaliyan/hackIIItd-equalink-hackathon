@@ -1,4 +1,5 @@
 import time
+from urllib.parse import urlencode
 from typing import Annotated
 
 import jwt
@@ -48,6 +49,10 @@ async def _token(s: Settings, conn: GithubConnection) -> tuple[str, bool]:
         if not s.app_configured or conn.installation_id is None:
             raise HTTPException(409, "GitHub App is no longer configured on the server.")
         return await github.installation_token(s, conn.installation_id), True
+    if conn.mode == "oauth":
+        if not conn.access_token:
+            raise HTTPException(409, "No GitHub token stored. Connect again.")
+        return conn.access_token, False
     if not s.github_token:
         raise HTTPException(409, "GITHUB_TOKEN is no longer set on the server.")
     return s.github_token, False
@@ -65,23 +70,27 @@ async def _status(s: Settings, db: Session, conn: GithubConnection) -> GithubSta
     )
 
 
-def _save(db: Session, mode: str, account: str, installation_id: int | None = None) -> GithubConnection:
-    conn = GithubConnection(id=1, mode=mode, account=account, installation_id=installation_id)
+def _save(
+    db: Session, mode: str, account: str, installation_id: int | None = None, access_token: str | None = None
+) -> GithubConnection:
+    conn = GithubConnection(
+        id=1, mode=mode, account=account, installation_id=installation_id, access_token=access_token
+    )
     db.merge(conn)
     db.commit()
     return conn
 
 
-def _sign_state(s: Settings) -> str:
-    return jwt.encode({"exp": int(time.time()) + 600, "purpose": "gh-install"}, s.state_secret, algorithm="HS256")
+def _sign_state(s: Settings, purpose: str = "gh-install") -> str:
+    return jwt.encode({"exp": int(time.time()) + 600, "purpose": purpose}, s.state_secret, algorithm="HS256")
 
 
-def _check_state(s: Settings, state: str) -> None:
+def _check_state(s: Settings, state: str, purpose: str = "gh-install") -> None:
     try:
         claims = jwt.decode(state, s.state_secret, algorithms=["HS256"])
     except jwt.PyJWTError:
         raise HTTPException(400, "Invalid or expired install state. Start the connection again.")
-    if claims.get("purpose") != "gh-install":
+    if claims.get("purpose") != purpose:
         raise HTTPException(400, "Invalid install state.")
 
 
@@ -93,6 +102,11 @@ async def status(s: SettingsDep, db: SessionDep):
     try:
         return await _status(s, db, conn)
     except github.GitHubError as e:
+        if e.status == 401 and conn.mode == "oauth":
+            # The user revoked EquaLink on GitHub: forget the dead token.
+            db.exec(delete(GithubConnection))
+            db.commit()
+            return _disconnected(s)
         raise HTTPException(502, e.message)
 
 
@@ -102,10 +116,12 @@ async def connect(s: SettingsDep, db: SessionDep):
         raise HTTPException(
             400, "GitHub isn't configured on the server. Set GITHUB_TOKEN, or the GITHUB_APP_* variables, in server/.env."
         )
+    if s.github_mode in ("app", "oauth") and not s.state_secret:
+        raise HTTPException(500, "STATE_SECRET is not set in server/.env.")
     try:
+        if s.github_mode == "oauth":
+            return _disconnected(s, install_url=github.oauth_authorize_url(s, _sign_state(s, "gh-oauth")))
         if s.github_mode == "app":
-            if not s.state_secret:
-                raise HTTPException(500, "STATE_SECRET is not set in server/.env.")
             url = f"https://github.com/apps/{s.github_app_slug}/installations/new?state={_sign_state(s)}"
             return _disconnected(s, install_url=url)
         conn = _save(db, "pat", await github.pat_user(s.github_token))
@@ -129,6 +145,28 @@ async def callback(
         raise HTTPException(502, e.message)
     _save(db, "app", account, installation_id)
     return RedirectResponse(f"{s.frontend_url}/integrations/github?connected=1")
+
+
+@router.get("/oauth/callback")
+async def oauth_callback(
+    s: SettingsDep,
+    db: SessionDep,
+    state: Annotated[str, Query()],
+    code: Annotated[str | None, Query()] = None,
+    error: Annotated[str | None, Query()] = None,
+):
+    """OAuth App callback URL: GitHub redirects here after the user approves (or denies)."""
+    _check_state(s, state, "gh-oauth")
+    back = f"{s.frontend_url}/integrations/github"
+    if error or not code:
+        return RedirectResponse(f"{back}?{urlencode({'error': error or 'missing_code'})}")
+    try:
+        token = await github.exchange_code(s, code)
+        account = await github.pat_user(token)  # GET /user works for any user token
+    except github.GitHubError as e:
+        return RedirectResponse(f"{back}?{urlencode({'error': e.message})}")
+    _save(db, "oauth", account, access_token=token)
+    return RedirectResponse(f"{back}?connected=1")
 
 
 @router.delete("", response_model=GithubStatus)

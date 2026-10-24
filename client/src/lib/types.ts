@@ -90,7 +90,7 @@ export interface GithubStatus {
   account?: string;
   repos: GithubRepo[];
   /** Server auth mode: a GitHub App, a personal access token, or not configured. */
-  mode?: "app" | "pat" | "none";
+  mode?: "app" | "oauth" | "pat" | "none";
   /** When set, the user must finish connecting on GitHub (App install). */
   install_url?: string;
 }

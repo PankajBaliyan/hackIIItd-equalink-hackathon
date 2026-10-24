@@ -1,0 +1,57 @@
+EquaLink: setup and run commands
+Run these from the repo root unless noted.
+
+=== BACKEND (server/) ===
+
+cd server
+
+# 1. Create a virtual environment (Python 3.11+; 3.12 recommended)
+python3.12 -m venv .venv
+
+# 2. Install dependencies
+.venv/bin/pip install -r requirements-dev.txt
+
+# 3. Create your env file (skip if server/.env already exists)
+cp .env.example .env
+
+# 4. Start the server with auto-reload on http://localhost:8000
+.venv/bin/uvicorn app.main:app --reload --port 8000
+
+# Check it's running
+curl localhost:8000/health
+
+# Run the tests
+.venv/bin/python -m pytest
+
+# Same thing with uv instead of pip
+uv venv --python 3.12 .venv
+uv pip install --python .venv/bin/python -r requirements-dev.txt
+.venv/bin/uvicorn app.main:app --reload --port 8000
+
+# To connect GitHub with "Sign in with GitHub" (OAuth), edit server/.env and restart:
+#   github.com/settings/developers -> New OAuth App
+#     Homepage URL:               http://localhost:5173
+#     Authorization callback URL: http://localhost:8000/integrations/github/oauth/callback
+#   GITHUB_CLIENT_ID=<client id>
+#   GITHUB_CLIENT_SECRET=<client secret>
+#
+# Or, no browser login:
+#   GITHUB_TOKEN=<your token>          (quickest for dev)
+#   or the GITHUB_APP_* variables      (GitHub App, see server/README.md)
+# Without either, "Connect GitHub" returns "GitHub isn't configured on the server".
+
+
+=== FRONTEND (client/) ===  (use a second terminal)
+
+cd client
+npm install
+npm run dev          # http://localhost:5173
+
+# client/.env already has VITE_GITHUB_LIVE=true, so the GitHub page calls the server.
+
+# Other client scripts
+npm run build        # production build
+npm run lint         # ESLint
+npm test             # unit tests
+npx playwright install chromium   # one-time, before the e2e tests
+npm run test:e2e     # axe on every route + full mock demo flow

@@ -89,7 +89,17 @@ let cached: Promise<ScanApi> | undefined;
 /** Picks the mock or real implementation from VITE_USE_MOCKS; mocks are code-split. */
 export function getApi(): Promise<ScanApi> {
   cached ??= USE_MOCKS
-    ? import("@/lib/mocks/mockApi").then((m) => m.mockApi)
+    ? import("@/lib/mocks/mockApi").then((m) =>
+        GITHUB_LIVE
+          ? {
+              ...m.mockApi,
+              getGithub: realApi.getGithub,
+              connectGithub: realApi.connectGithub,
+              disconnectGithub: realApi.disconnectGithub,
+              setGithubRepo: realApi.setGithubRepo,
+            }
+          : m.mockApi,
+      )
     : Promise.resolve(realApi);
   return cached;
 }

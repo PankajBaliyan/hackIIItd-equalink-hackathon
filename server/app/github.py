@@ -84,3 +84,33 @@ async def list_repos(token: str, *, installation: bool) -> list[str]:
         for r in repos
         if not r.get("archived") and (installation or r.get("permissions", {}).get("push"))
     ]
+
+
+OAUTH_AUTHORIZE = "https://github.com/login/oauth/authorize"
+OAUTH_TOKEN = "https://github.com/login/oauth/access_token"
+
+
+def oauth_authorize_url(s: Settings, state: str) -> str:
+    q = httpx.QueryParams(
+        {"client_id": s.github_client_id, "redirect_uri": s.oauth_redirect_uri, "scope": "repo", "state": state}
+    )
+    return f"{OAUTH_AUTHORIZE}?{q}"
+
+
+async def exchange_code(s: Settings, code: str) -> str:
+    """Trade the one-time OAuth code for a user access token."""
+    async with httpx.AsyncClient(timeout=15) as c:
+        res = await c.post(
+            OAUTH_TOKEN,
+            headers={"Accept": "application/json"},
+            data={
+                "client_id": s.github_client_id,
+                "client_secret": s.github_client_secret,
+                "code": code,
+                "redirect_uri": s.oauth_redirect_uri,
+            },
+        )
+    data = res.json() if res.is_success else {}
+    if "access_token" not in data:
+        raise GitHubError(400, f"GitHub said: {data.get('error_description') or data.get('error') or res.text}")
+    return data["access_token"]
