@@ -11,6 +11,8 @@ import {
   Github,
   ShieldCheck,
 } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
+import { getApi } from "@/lib/api";
 import { useGithub } from "@/lib/useGithub";
 import { A11yBadge } from "@/components/shell/A11yBadge";
 import { navGroups, allNavItems } from "@/lib/nav";
@@ -38,6 +40,12 @@ function Logo({ compact }: { compact?: boolean }) {
 }
 
 function NavList({ collapsed, onNavigate }: { collapsed?: boolean; onNavigate?: () => void }) {
+  // Live Scan and Fixes point at the most recent scan
+  const { data: scans } = useQuery({
+    queryKey: ["scans"],
+    queryFn: async () => (await getApi()).listScans(),
+  });
+  const latestId = scans?.[0]?.id;
   return (
     <nav aria-label="Primary" className="flex-1 overflow-y-auto px-3 py-2">
       {navGroups.map((g) => (
@@ -57,7 +65,7 @@ function NavList({ collapsed, onNavigate }: { collapsed?: boolean; onNavigate?: 
                 <li key={item.label}>
                   <Link
                     to={item.to}
-                    params={item.params as never}
+                    params={(item.params && latestId ? { id: latestId } : item.params) as never}
                     onClick={onNavigate}
                     activeOptions={{ exact: true }}
                     title={collapsed ? item.label : undefined}

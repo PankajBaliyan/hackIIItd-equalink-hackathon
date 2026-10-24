@@ -174,7 +174,7 @@ function Page() {
         {pullRequests.length === 0 ? (
           <p className="flex items-center gap-2 text-sm text-muted">
             <GitPullRequest aria-hidden className="size-4" /> None yet.{" "}
-            <Link to="/" className="text-brand underline underline-offset-2">
+            <Link to="/" className="text-text underline underline-offset-2 hover:text-brand-2">
               Run a scan
             </Link>
           </p>
@@ -191,7 +191,7 @@ function Page() {
                   href={pr.url}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="ml-auto text-brand underline underline-offset-2"
+                  className="ml-auto text-text underline underline-offset-2 hover:text-brand-2"
                 >
                   View
                   <span className="sr-only"> pull request {pr.number} (opens in a new tab)</span>

@@ -13,6 +13,10 @@ class Settings(BaseSettings):
 
     server_url: str = "http://localhost:8000"
 
+    # Scans fetch URLs the user supplies. Allow localhost/private targets for local dev; set false when deployed.
+    allow_private_targets: bool = True
+    max_site_pages: int = 5
+
     github_client_id: str = ""
     github_client_secret: str = ""
     github_token: str = ""

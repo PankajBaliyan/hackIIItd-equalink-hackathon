@@ -105,7 +105,7 @@ function Detail({
             href={understandingUrl(issue.wcag_sc)}
             target="_blank"
             rel="noopener noreferrer"
-            className="inline-flex items-center gap-1 text-brand underline underline-offset-2"
+            className="inline-flex items-center gap-1 text-text underline underline-offset-2 hover:text-brand-2"
           >
             {issue.wcag_sc} Understanding <ExternalLink aria-hidden className="size-3" />
             <span className="sr-only"> (opens in a new tab)</span>
@@ -359,9 +359,11 @@ export function FixesPage({ id }: { id: string }) {
               <Suspense fallback={<Skeleton className="mx-auto size-44 rounded-full" />}>
                 <ScoreGauge before={scan.score_before} after={scan.score_after} />
               </Suspense>
-              <p className="flex items-center justify-center gap-1.5 text-sm text-success">
-                <ShieldCheck aria-hidden className="size-4" /> Verified by TinyFish
-              </p>
+              {scan.score_after != null && (
+                <p className="flex items-center justify-center gap-1.5 text-sm text-success">
+                  <ShieldCheck aria-hidden className="size-4" /> Verified by TinyFish
+                </p>
+              )}
               <ul className="grid grid-cols-3 gap-2 text-center text-sm">
                 <li>
                   <p className="tabular text-2xl font-semibold">{counts.validated}</p>

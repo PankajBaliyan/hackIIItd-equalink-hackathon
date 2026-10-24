@@ -29,3 +29,39 @@ class Site(SQLModel, table=True):
     host: str
     repo: str | None = None  # owner/repo that holds this site's source
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class Scan(SQLModel, table=True):
+    id: str = Field(primary_key=True)
+    url: str
+    mode: str  # "url" | "repo"
+    level: str  # A | AA | AAA
+    scope: str  # page | site
+    repo: str | None = None
+    status: str = "queued"
+    score_before: int | None = None
+    score_after: int | None = None
+    error: str | None = None
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class IssueRow(SQLModel, table=True):
+    __tablename__ = "issue"
+
+    id: str = Field(primary_key=True)
+    scan_id: str = Field(index=True)
+    page_url: str
+    rule_id: str
+    wcag_sc: str
+    impact: str
+    selector: str
+    html: str
+    context: str | None = None
+
+
+class EventRow(SQLModel, table=True):
+    """Append-only progress log; the SSE endpoint tails it, so it survives reconnects."""
+
+    id: int | None = Field(default=None, primary_key=True)
+    scan_id: str = Field(index=True)
+    payload: str  # JSON of the dashboard's ScanEvent

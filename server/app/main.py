@@ -5,14 +5,16 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import get_settings
-from app.db import init_db
+from app.db import fail_orphaned_scans, init_db
 from app.routes_github import router as github_router
+from app.routes_scans import router as scans_router
 from app.routes_sites import router as sites_router
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     init_db()
+    fail_orphaned_scans()
     yield
 
 
@@ -27,6 +29,7 @@ app.add_middleware(
 
 app.include_router(github_router)
 app.include_router(sites_router)
+app.include_router(scans_router)
 
 
 @app.get("/health")

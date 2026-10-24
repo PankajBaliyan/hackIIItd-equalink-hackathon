@@ -11,6 +11,9 @@ python3.12 -m venv .venv
 # 2. Install dependencies
 .venv/bin/pip install -r requirements-dev.txt
 
+# 2b. One-time: download the browser used for scans
+.venv/bin/python -m playwright install chromium
+
 # 3. Create your env file (skip if server/.env already exists)
 cp .env.example .env
 

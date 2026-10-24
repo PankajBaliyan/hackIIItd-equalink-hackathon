@@ -1,7 +1,7 @@
 from collections.abc import Iterator
 
 from sqlalchemy import inspect, text
-from sqlmodel import Session, SQLModel, create_engine
+from sqlmodel import Session, SQLModel, create_engine, select
 
 from app.config import get_settings
 
@@ -29,3 +29,15 @@ def init_db() -> None:
 def get_session() -> Iterator[Session]:
     with Session(engine()) as session:
         yield session
+
+
+def fail_orphaned_scans() -> None:
+    """A scan still running when the server stopped will never finish: mark it failed."""
+    from app.models import EventRow, Scan  # local import: models import nothing from here
+
+    with Session(engine()) as db:
+        for scan in db.exec(select(Scan).where(Scan.status.notin_(["done", "failed"]))).all():  # type: ignore[attr-defined]
+            scan.status, scan.error = "failed", "Server restarted during the scan."
+            db.add(scan)
+            db.add(EventRow(scan_id=scan.id, payload='{"stage":"failed","type":"info","ts":"","message":"scan failed: server restarted"}'))
+        db.commit()

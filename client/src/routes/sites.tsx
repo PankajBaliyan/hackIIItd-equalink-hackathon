@@ -146,7 +146,7 @@ function SiteCard({ site, onRemove }: { site: Site; onRemove: (s: Site) => void 
                 href={`https://github.com/${site.repo}`}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="inline-flex items-center gap-1 font-mono text-brand underline underline-offset-2"
+                className="inline-flex items-center gap-1 font-mono text-text underline underline-offset-2 hover:text-brand-2"
               >
                 <Github aria-hidden className="size-3.5" />
                 {site.repo}

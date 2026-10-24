@@ -1,6 +1,6 @@
 # EquaLink server
 
-FastAPI backend. Today it implements the **GitHub integration** (`/integrations/github`) and **Sites** (`/sites`) pages; scan, fix and ship stages come later (see `Docs/EquaLink-Execution-Plan.md`).
+FastAPI backend. Today it implements the **GitHub integration** (`/integrations/github`) **Sites** (`/sites`) and real **scans**; scan, fix and ship stages come later (see `Docs/EquaLink-Execution-Plan.md`).
 
 ## Run
 
@@ -9,6 +9,7 @@ cd server
 python3.12 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
 # or with uv: uv venv --python 3.12 .venv && uv pip install --python .venv/bin/python -r requirements-dev.txt
 cp .env.example .env      # then edit, see below
+.venv/bin/python -m playwright install chromium   # one-time: browser used for scans
 .venv/bin/uvicorn app.main:app --reload --port 8000
 .venv/bin/python -m pytest
 ```
@@ -35,6 +36,11 @@ Priority if several are set: App, then OAuth, then token. Secrets live only in `
 | GET | `/integrations/github/oauth/callback` | OAuth redirect target |
 | PATCH | `/integrations/github/repos` | Enable or disable PRs on a repo |
 | DELETE | `/integrations/github` | Disconnect and clear settings |
+| POST | `/scans` | Start a scan: `{url, repo?, level, scope}` |
+| GET | `/scans` | List scans |
+| GET | `/scans/{id}` | Scan, issues and fixes |
+| GET | `/scans/{id}/events` | SSE progress stream (supports `Last-Event-ID`) |
+| POST | `/scans/{id}/ship` | 501 until automatic fixes exist |
 | GET | `/sites` | List tracked sites |
 | POST | `/sites` | Add a site: `{url, repo?}` (bare domains get https://, duplicates rejected) |
 | DELETE | `/sites/{id}` | Stop tracking a site |
@@ -42,6 +48,9 @@ Priority if several are set: App, then OAuth, then token. Secrets live only in `
 
 ## Limits
 
+- A scan renders each page in headless Chromium and runs axe-core, then scores it (100 minus weighted issues). It does **not** yet call TinyFish, run the LLM fixer or re-verify, so scans end with issues awaiting human review and no fixes. axe-core cannot see everything: for example a `div` with `onclick` or a placeholder-only input is not flagged, which is what the planned LLM checks are for.
+- `scope: site` follows up to `MAX_SITE_PAGES` same-origin links from the first page.
+- `ALLOW_PRIVATE_TARGETS=true` lets scans hit localhost and private addresses. Turn it off when deployed.
 - One connection for the whole server: there is no user login yet.
 - The repo toggle is stored, but nothing opens PRs yet. That arrives with `POST /scans/{id}/ship`.
 - Verified against the real GitHub API only for the error path (a bad token returns "Bad credentials"). The OAuth redirect and callback are unit-tested with mocks; a full sign-in needs your OAuth App credentials and has not been run here.

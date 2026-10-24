@@ -55,7 +55,12 @@ export const RULE_TITLES: Record<string, { title: string; description: string }>
     description: "Links need discernible text so their purpose is announced.",
   },
 };
-export const ruleTitle = (id: string) => RULE_TITLES[id]?.title ?? id;
+export const ruleTitle = (id: string) => {
+  const t = RULE_TITLES[id]?.title;
+  if (t) return t;
+  const words = id.replace(/-/g, " ");
+  return words.charAt(0).toUpperCase() + words.slice(1);
+};
 
 export function countBySeverity(issues: Issue[]): Record<Severity, number> {
   const c = emptyCounters();

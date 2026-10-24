@@ -136,7 +136,7 @@ function Page() {
                     <Link
                       to={target(s)}
                       params={{ id: s.id }}
-                      className="text-brand underline underline-offset-2"
+                      className="text-text underline underline-offset-2 hover:text-brand-2"
                     >
                       {s.status === "done" ? "Fixes" : "View"}
                       <span className="sr-only"> for {s.url}</span>

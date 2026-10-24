@@ -1,4 +1,4 @@
-import { useNavigate } from "@tanstack/react-router";
+import { Link, useNavigate } from "@tanstack/react-router";
 import { Check, Github, X } from "lucide-react";
 import { useState } from "react";
 import type { FormEvent } from "react";
@@ -11,6 +11,8 @@ import { SegmentedControl } from "@/components/ui/segmented-control";
 import { TextField } from "@/components/ui/text-field";
 import type { Scan } from "@/lib/types";
 import { useGithub } from "@/lib/useGithub";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { sitesApi } from "@/lib/api";
 import { useScanStore } from "@/state/scanStore";
 
 /** Returns a normalized http(s) URL, or an error message. Bare domains get https://. */
@@ -52,7 +54,9 @@ export function ScanForm({
   const [repoError, setRepoError] = useState<string>();
   const [auto, setAuto] = useState(false);
   const [busy, setBusy] = useState(false);
+  const qc = useQueryClient();
   const { data: gh } = useGithub();
+  const { data: sites } = useQuery({ queryKey: ["sites"], queryFn: sitesApi.list, retry: false });
   const suggestions = gh?.connected ? gh.repos.filter((r) => r.enabled) : [];
 
   const repoConnected = repo.trim() !== "" && REPO_RE.test(repo.trim());
@@ -84,6 +88,7 @@ export function ScanForm({
         ...(repoConnected && { repo: repo.trim() }),
         auto_ship: auto,
       });
+      void qc.invalidateQueries({ queryKey: ["scans"] });
       await navigate({ to: "/scans/$id", params: { id: scan.id } });
     } catch (err) {
       toast.error("Couldn't start the scan", {
@@ -103,6 +108,31 @@ export function ScanForm({
       <h2 id="scan-form-title" className="text-xl">
         Start a scan
       </h2>
+
+      {sites && sites.length > 0 && (
+        <label className="block space-y-1.5 text-sm font-medium">
+          <span className="block">Your sites</span>
+          <select
+            value=""
+            onChange={(e) => {
+              const site = sites.find((x) => String(x.id) === e.target.value);
+              if (!site) return;
+              setUrl(site.url);
+              setUrlError(undefined);
+              if (site.repo) setRepo(site.repo);
+            }}
+            className="min-h-11 w-full rounded-md border bg-surface px-2 text-base font-normal focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:min-h-10 sm:text-sm"
+          >
+            <option value="">Choose a saved site…</option>
+            {sites.map((x) => (
+              <option key={x.id} value={x.id}>
+                {x.host}
+                {x.repo ? ` (${x.repo})` : ""}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
 
       <TextField
         id="scan-url"
@@ -165,6 +195,18 @@ export function ScanForm({
             <option key={r.full_name} value={r.full_name} />
           ))}
         </datalist>
+        {gh && !gh.connected && (
+          <p className="text-sm text-muted">
+            GitHub isn&apos;t connected.{" "}
+            <Link
+              to="/integrations/github"
+              className="text-text underline underline-offset-2 hover:text-brand-2"
+            >
+              Connect it
+            </Link>{" "}
+            to pick from your repositories.
+          </p>
+        )}
         {repoConnected && (
           <p className="flex items-center gap-2" role="status">
             <Chip className="gap-1.5 text-success">
