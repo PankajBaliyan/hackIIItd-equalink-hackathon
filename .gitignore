@@ -1,0 +1,58 @@
+# OS / editor
+.DS_Store
+.vscode/*
+!.vscode/extensions.json
+.idea
+*.swp
+*.suo
+
+# Secrets (GitHub App key, API keys)
+.env
+.env.*
+!.env.example
+*.pem
+
+# Logs
+*.log
+logs
+
+# Node / frontend (client/)
+node_modules
+dist
+dist-ssr
+.output
+.vinxi
+.tanstack
+.nitro
+.wrangler
+.dev.vars
+*.local
+coverage
+
+# Python / backend (backend/)
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+
+# Local SQLite job store
+*.db
+*.sqlite3
+
+# Playwright artifacts
+test-results/
+playwright-report/
+playwright/.cache/
+
+# Demo site build output (demo-site/)
+demo-site/node_modules
+demo-site/dist
+
+# Large local pitch assets: keep the PDF and Markdown, ignore chat exports
+Docs/WhatsApp Image *.jpeg
+
+Docs/
