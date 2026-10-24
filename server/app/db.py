@@ -25,6 +25,19 @@ def init_db() -> None:
     if "access_token" not in cols:
         with engine().begin() as conn:
             conn.execute(text("ALTER TABLE githubconnection ADD COLUMN access_token VARCHAR"))
+    if "engine" not in {c["name"] for c in insp.get_columns("scan")}:
+        with engine().begin() as conn:
+            conn.execute(text("ALTER TABLE scan ADD COLUMN engine VARCHAR NOT NULL DEFAULT 'local'"))
+    issue_cols = {c["name"] for c in insp.get_columns("issue")}
+    for name, ddl in (
+        ("rule_doc_id", "INTEGER"),
+        ("detector", "VARCHAR NOT NULL DEFAULT 'axe'"),
+        ("source_file", "VARCHAR"),
+        ("source_line", "INTEGER"),
+    ):
+        if name not in issue_cols:
+            with engine().begin() as conn:
+                conn.execute(text(f"ALTER TABLE issue ADD COLUMN {name} {ddl}"))
     if "origin" not in {c["name"] for c in insp.get_columns("ruledoc")}:
         with engine().begin() as conn:
             conn.execute(text("ALTER TABLE ruledoc ADD COLUMN origin VARCHAR NOT NULL DEFAULT 'manual'"))

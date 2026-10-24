@@ -10,10 +10,10 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
-from app import pipeline
+from app import pipeline, tinyfish_browser
 from app.config import Settings, get_settings
 from app.db import engine, get_session
-from app.models import EventRow, IssueRow, Scan
+from app.models import EventRow, IssueRow, RuleDoc, Scan
 from app.routes_sites import normalize_url, REPO_RE
 
 router = APIRouter(prefix="/scans", tags=["scans"])
@@ -23,8 +23,9 @@ TERMINAL = {"done", "failed"}
 
 
 class ScanIn(BaseModel):
-    url: str
+    url: str | None = None  # a site scan needs it; a repo scan takes the repo instead
     repo: str | None = None
+    target: Literal["site", "repo"] = "site"  # "repo": scan the repo's source code instead of a rendered page
     level: Literal["A", "AA", "AAA"] = "AA"
     scope: Literal["page", "site"] = "page"
     auto_ship: bool = False
@@ -36,7 +37,7 @@ def _iso(dt: datetime) -> str:
 
 def scan_out(s: Scan) -> dict:
     out = {
-        "id": s.id, "url": s.url, "mode": s.mode, "level": s.level, "scope": s.scope,
+        "id": s.id, "url": s.url, "mode": s.mode, "level": s.level, "scope": s.scope, "engine": s.engine,
         "status": s.status, "created_at": _iso(s.created_at),
     }
     if s.score_before is not None:
@@ -48,14 +49,22 @@ def scan_out(s: Scan) -> dict:
 
 @router.post("", status_code=201)
 async def create_scan(body: ScanIn, db: SessionDep, settings: SettingsDep):
-    url = normalize_url(body.url)
-    pipeline.check_target(settings, url)
     repo = (body.repo or "").strip() or None
     if repo and not REPO_RE.match(repo):
         raise HTTPException(422, "Repository must look like owner/repo.")
+    if body.target == "repo":
+        if not repo:
+            raise HTTPException(422, "Enter the repository to scan, like owner/repo.")
+        url, mode, engine = f"https://github.com/{repo}", "source", "source"
+    else:
+        if not body.url:
+            raise HTTPException(422, "Enter a website URL.")
+        url = normalize_url(body.url)
+        pipeline.check_target(settings, url)
+        mode, engine = "repo" if repo else "url", tinyfish_browser.choose_engine(settings, url)
     scan = Scan(
-        id=f"scan_{secrets.token_hex(4)}", url=url, mode="repo" if repo else "url",
-        level=body.level, scope=body.scope, repo=repo,
+        id=f"scan_{secrets.token_hex(4)}", url=url, mode=mode,
+        level=body.level, scope=body.scope, repo=repo, engine=engine,
     )
     db.add(scan)
     db.commit()
@@ -75,7 +84,9 @@ def get_scan(scan_id: str, db: SessionDep):
     if not scan:
         raise HTTPException(404, "Scan not found.")
     issues = db.exec(select(IssueRow).where(IssueRow.scan_id == scan_id)).all()
-    return {"scan": scan_out(scan), "issues": [pipeline.issue_dict(i) for i in issues], "fixes": []}
+    ids = {i.rule_doc_id for i in issues if i.rule_doc_id}
+    docs = {d.id: d for d in db.exec(select(RuleDoc).where(RuleDoc.id.in_(ids))).all()} if ids else {}  # type: ignore[attr-defined]
+    return {"scan": scan_out(scan), "issues": [pipeline.issue_dict(i, docs.get(i.rule_doc_id)) for i in issues], "fixes": []}
 
 
 @router.post("/{scan_id}/ship")

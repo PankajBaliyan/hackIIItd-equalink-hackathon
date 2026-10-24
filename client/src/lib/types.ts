@@ -5,9 +5,12 @@ export type Stage =
 export interface Scan {
   id: string;
   url: string;
-  mode: "url" | "repo";
+  /** "repo": a site scan with a repo attached for PRs. "source": the repo's code is scanned. */
+  mode: "url" | "repo" | "source";
   level: "A" | "AA" | "AAA";
   scope: "page" | "site";
+  /** Where pages were rendered: a TinyFish remote browser, or Chromium on the server. */
+  engine?: "tinyfish" | "local" | "source";
   status: Stage;
   score_before?: number;
   score_after?: number;
@@ -26,6 +29,10 @@ export interface Issue {
   context?: string;
   source_file?: string;
   source_line?: number;
+  /** The saved W3C rule that covers this issue's success criterion, if one is stored. */
+  /** What found it: axe on a rendered page, static rules on source, or Claude's source review. */
+  detector?: "axe" | "static" | "claude";
+  rule?: { id: number; title: string; source_url: string | null; excerpt: string } | null;
 }
 
 export interface Fix {
@@ -62,7 +69,10 @@ export interface ScanEvent {
 
 /** Request body for POST /scans. */
 export interface CreateScanInput {
-  url: string;
+  /** Required for a site scan. A repo scan takes `repo` instead. */
+  url?: string;
+  /** "repo" scans the repository's source code; default "site" scans a rendered page. */
+  target?: "site" | "repo";
   repo?: string;
   level: Scan["level"];
   scope: Scan["scope"];

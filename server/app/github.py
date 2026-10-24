@@ -1,6 +1,7 @@
 """Thin async client for the GitHub REST API (PAT and GitHub App auth)."""
 
 import time
+from urllib.parse import quote
 
 import httpx
 import jwt
@@ -19,11 +20,11 @@ class GitHubError(Exception):
         self.message = message
 
 
-def _client(token: str | None = None) -> httpx.AsyncClient:
+def _client(token: str | None = None, transport: httpx.AsyncBaseTransport | None = None) -> httpx.AsyncClient:
     headers = dict(HEADERS)
     if token:
         headers["Authorization"] = f"Bearer {token}"
-    return httpx.AsyncClient(base_url=API, headers=headers, timeout=15)
+    return httpx.AsyncClient(base_url=API, headers=headers, timeout=15, transport=transport)
 
 
 async def _check(res: httpx.Response) -> dict:
@@ -114,3 +115,26 @@ async def exchange_code(s: Settings, code: str) -> str:
     if "access_token" not in data:
         raise GitHubError(400, f"GitHub said: {data.get('error_description') or data.get('error') or res.text}")
     return data["access_token"]
+
+
+async def default_branch(c: httpx.AsyncClient, full_name: str) -> str:
+    return (await _check(await c.get(f"/repos/{full_name}")))["default_branch"]
+
+
+async def repo_blobs(c: httpx.AsyncClient, full_name: str, ref: str) -> tuple[list[dict], bool]:
+    """(files in the tree at `ref` as {path, size}, whether GitHub truncated the listing)."""
+    data = await _check(await c.get(f"/repos/{full_name}/git/trees/{ref}", params={"recursive": "1"}))
+    return [{"path": t["path"], "size": t.get("size", 0)} for t in data["tree"] if t["type"] == "blob"], bool(data.get("truncated"))
+
+
+async def file_text(c: httpx.AsyncClient, full_name: str, path: str, ref: str) -> str:
+    res = await c.get(
+        f"/repos/{full_name}/contents/{quote(path)}", params={"ref": ref}, headers={"Accept": "application/vnd.github.raw+json"}
+    )
+    if not res.is_success:
+        await _check(res)
+    return res.text
+
+
+def client(token: str | None = None, transport: httpx.AsyncBaseTransport | None = None) -> httpx.AsyncClient:
+    return _client(token, transport)

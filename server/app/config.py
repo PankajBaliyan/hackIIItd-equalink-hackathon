@@ -1,5 +1,6 @@
 from functools import lru_cache
 from pathlib import Path
+from typing import Literal
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -16,6 +17,17 @@ class Settings(BaseSettings):
     # Scans fetch URLs the user supplies. Allow localhost/private targets for local dev; set false when deployed.
     allow_private_targets: bool = True
     max_site_pages: int = 5
+
+    # Where scans render pages: "auto" uses a TinyFish remote browser for public URLs when TINYFISH_API_KEY is set
+    # and local Chromium otherwise (TinyFish can't reach localhost); "tinyfish" and "local" force one.
+    scan_engine: Literal["auto", "tinyfish", "local"] = "auto"
+
+    # Repo (source code) scans. The static checks always run; the Claude review pass needs ANTHROPIC_API_KEY.
+    source_max_files: int = 150
+    source_max_file_bytes: int = 150_000
+    source_llm_max_files: int = 40
+    anthropic_api_key: str = ""
+    anthropic_model: str = "claude-opus-5-5"
 
     # W3C rules sync: a TinyFish agent fetches the latest W3C accessibility rules into the reference docs.
     tinyfish_api_key: str = ""

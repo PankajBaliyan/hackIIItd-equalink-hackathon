@@ -46,6 +46,7 @@ export function ScanForm({
 }) {
   const navigate = useNavigate();
   const { startScan } = useScanStore();
+  const [target, setTarget] = useState<"site" | "repo">("site");
   const [url, setUrl] = useState(initialUrl);
   const [urlError, setUrlError] = useState<string>();
   const [level, setLevel] = useState<Scan["level"]>("AA");
@@ -69,8 +70,9 @@ export function ScanForm({
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
-    const parsed = parseScanUrl(url);
-    const repoBad = repo.trim() !== "" && !REPO_RE.test(repo.trim());
+    const repoScan = target === "repo";
+    const parsed = repoScan ? { url: "" } : parseScanUrl(url);
+    const repoBad = repoScan ? !repoConnected : repo.trim() !== "" && !REPO_RE.test(repo.trim());
     setUrlError("error" in parsed ? parsed.error : undefined);
     setRepoError(repoBad ? "Use the format owner/repo." : undefined);
     if ("error" in parsed || repoBad) {
@@ -82,7 +84,7 @@ export function ScanForm({
     setBusy(true);
     try {
       const scan = await startScan({
-        url: parsed.url,
+        ...(repoScan ? { target: "repo" as const } : { url: parsed.url }),
         level,
         scope,
         ...(repoConnected && { repo: repo.trim() }),
@@ -109,7 +111,17 @@ export function ScanForm({
         Start a scan
       </h2>
 
-      {sites && sites.length > 0 && (
+      <SegmentedControl
+        label="What to scan"
+        value={target}
+        onValueChange={setTarget}
+        options={[
+          { value: "site", label: "Website" },
+          { value: "repo", label: "GitHub repo" },
+        ]}
+      />
+
+      {target === "site" && sites && sites.length > 0 && (
         <label className="block space-y-1.5 text-sm font-medium">
           <span className="block">Your sites</span>
           <select
@@ -134,55 +146,63 @@ export function ScanForm({
         </label>
       )}
 
-      <TextField
-        id="scan-url"
-        label="Website URL"
-        type="url"
-        inputMode="url"
-        autoComplete="url"
-        spellCheck={false}
-        placeholder="https://shopeasy.dev"
-        hint="Paste any public page. We'll add https:// if you leave it out."
-        value={url}
-        error={urlError}
-        onChange={(e) => {
-          setUrl(e.target.value);
-          if (urlError) setUrlError(undefined);
-        }}
-        onBlur={validateUrl}
-      />
+      {target === "site" && (
+        <TextField
+          id="scan-url"
+          label="Website URL"
+          type="url"
+          inputMode="url"
+          autoComplete="url"
+          spellCheck={false}
+          placeholder="https://shopeasy.dev"
+          hint="Paste any public page. We'll add https:// if you leave it out."
+          value={url}
+          error={urlError}
+          onChange={(e) => {
+            setUrl(e.target.value);
+            if (urlError) setUrlError(undefined);
+          }}
+          onBlur={validateUrl}
+        />
+      )}
 
-      <div className="flex flex-wrap gap-x-8 gap-y-4">
-        <SegmentedControl
-          label="WCAG level"
-          value={level}
-          onValueChange={setLevel}
-          options={[
-            { value: "A", label: "A" },
-            { value: "AA", label: "AA" },
-            { value: "AAA", label: "AAA" },
-          ]}
-        />
-        <SegmentedControl
-          label="Scope"
-          value={scope}
-          onValueChange={setScope}
-          options={[
-            { value: "page", label: "Single page" },
-            { value: "site", label: "Full site" },
-          ]}
-        />
-      </div>
+      {target === "site" && (
+        <div className="flex flex-wrap gap-x-8 gap-y-4">
+          <SegmentedControl
+            label="WCAG level"
+            value={level}
+            onValueChange={setLevel}
+            options={[
+              { value: "A", label: "A" },
+              { value: "AA", label: "AA" },
+              { value: "AAA", label: "AAA" },
+            ]}
+          />
+          <SegmentedControl
+            label="Scope"
+            value={scope}
+            onValueChange={setScope}
+            options={[
+              { value: "page", label: "Single page" },
+              { value: "site", label: "Full site" },
+            ]}
+          />
+        </div>
+      )}
 
       <div className="space-y-2">
         <TextField
           id="scan-repo"
           list="scan-repo-options"
-          label="GitHub repo (optional)"
+          label={target === "repo" ? "GitHub repo" : "GitHub repo (optional)"}
           placeholder="owner/repo"
           autoComplete="off"
           spellCheck={false}
-          hint="Connect a repo so validated fixes can be opened as a pull request."
+          hint={
+            target === "repo"
+              ? "We read the repo's HTML, JSX, TSX, Vue, Svelte and Astro files and report each issue with its file and line. Private repos need GitHub connected."
+              : "Connect a repo so validated fixes can be opened as a pull request."
+          }
           value={repo}
           error={repoError}
           onChange={(e) => {
@@ -234,7 +254,7 @@ export function ScanForm({
       />
 
       <Button type="submit" variant="primary" size="lg" className="w-full sm:w-auto" loading={busy}>
-        {busy ? "Starting scan…" : "Scan with TinyFish →"}
+        {busy ? "Starting scan…" : target === "repo" ? "Scan repo →" : "Scan with TinyFish →"}
       </Button>
     </form>
   );

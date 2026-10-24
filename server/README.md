@@ -48,7 +48,7 @@ Priority if several are set: App, then OAuth, then token. Secrets live only in `
 
 ## Limits
 
-- A scan renders each page in headless Chromium and runs axe-core, then scores it (100 minus weighted issues). It does **not** yet call TinyFish, run the LLM fixer or re-verify, so scans end with issues awaiting human review and no fixes. axe-core cannot see everything: for example a `div` with `onclick` or a placeholder-only input is not flagged, which is what the planned LLM checks are for.
+- A scan renders each page in a browser and runs axe-core on it, then scores it (100 minus weighted issues). With `TINYFISH_API_KEY` set, public URLs are rendered in a **TinyFish remote browser** (Browser API over CDP); `localhost` and private addresses use local Chromium because TinyFish cannot reach them. `SCAN_ENGINE` (`auto` default, `tinyfish`, `local`) overrides this, and the scan's `engine` field says which one ran. If TinyFish can't start a browser, or a site answers it with a bot-protection page (for example Cloudflare's "Just a moment…"), `auto` retries with local Chromium; a forced `tinyfish` scan fails instead. A blocked page is never scored. TinyFish sessions cost $0.002 per minute and are always ended when the scan finishes. The scan does **not** yet run the LLM fixer or re-verify, so scans end with issues awaiting human review. axe-core cannot see everything: for example a `div` with `onclick` or a placeholder-only input is not flagged, which is what the planned LLM checks are for.
 - `scope: site` follows up to `MAX_SITE_PAGES` same-origin links from the first page.
 - `ALLOW_PRIVATE_TARGETS=true` lets scans hit localhost and private addresses. Turn it off when deployed.
 - One connection for the whole server: there is no user login yet.
@@ -65,3 +65,14 @@ Priority if several are set: App, then OAuth, then token. Secrets live only in `
 - The first run is started by a person. After a successful run the server repeats it every `W3C_SYNC_INTERVAL_DAYS` (default 30) while it is up; set `W3C_SYNC_SCHEDULE=false` to disable that. A failed run is retried after a day.
 - **No duplicates:** a returned rule is stored only if no existing doc has the same WCAG success criterion (for example `1.4.3`) or the same normalized title. Stored rules are also listed in the agent's goal so it can skip them. A run that finds nothing new is a success.
 - The agent prompt lives in `app/prompts/w3c_rules.md`. Each run uses TinyFish credits.
+
+
+## Repo (source code) scans
+
+`POST /scans` with `{"target": "repo", "repo": "owner/repo"}` scans the repository's code instead of a rendered page (the **GitHub repo** option on New Scan).
+
+- It reads the repo with the connected GitHub account (or `GITHUB_TOKEN`; public repos work without either) and checks `.html`, `.jsx`, `.tsx`, `.vue`, `.svelte` and `.astro` files. `node_modules`, build output, tests and stories are skipped, up to `SOURCE_MAX_FILES` files, app folders (`src`, `app`, `pages`, `components`, ...) first.
+- **Static checks** (always on, in `app/source_rules.py`): missing `alt`, unlabeled inputs, empty buttons and links, click handlers on non-interactive elements, missing `lang`, frames without a title, videos without captions, positive `tabindex`, and viewports that block zoom. They only fire when the markup alone proves the problem; a `{...props}` spread skips the tag.
+- **Claude review** (optional, needs `ANTHROPIC_API_KEY`): the first `SOURCE_LLM_MAX_FILES` files go to Claude with your saved W3C rules as reference, to find what static rules can't (heading order, focus management, ARIA misuse, error text, contrast of hard-coded colors). Each reported issue is checked against the files that were sent, and a failure or refusal never fails the scan.
+- Every issue has `source_file`, `source_line` and a `detector` (`static` or `claude`), and links to that line on GitHub. Saved W3C rules are attached by success criterion as in rendered scans.
+- It does not render anything, so it can't measure computed color contrast, and it only sees markup that is in the files (not what a framework generates at runtime).
