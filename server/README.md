@@ -14,6 +14,12 @@ cp .env.example .env      # then edit, see below
 .venv/bin/python -m pytest
 ```
 
+On Windows, use `.venv/Scripts/python.exe -m uvicorn app.main:app --port 8000`
+without `--reload` when running Playwright scans or hybrid validation. Uvicorn's
+Windows reload mode selects an event loop without the subprocess support Playwright
+needs. Restart the server manually after code or environment changes. If an inherited
+environment variable overrides a local `.env` value, update or clear it before startup.
+
 In `client/.env` keep `VITE_API_BASE_URL=http://localhost:8000` and `VITE_GITHUB_LIVE=true`. Scans stay mocked until their endpoints exist.
 
 ## Connect GitHub (pick one mode in `server/.env`)
@@ -46,6 +52,7 @@ Priority if several are set: App, then OAuth, then token. Secrets live only in `
 | DELETE | `/sites/{id}` | Stop tracking a site |
 | GET | `/health` | Liveness and active GitHub mode |
 | POST | `/pull-requests` | Open a PR between existing branches in an enabled repository |
+| POST | `/api/hybrid-scan` | Authenticated HTML upload, TinyFish proposal, axe validation, source commit and PR |
 
 ## Git provider strategies
 
@@ -86,7 +93,8 @@ database. Existing backups and historical WAL/journal files require separate han
 PR text is never saved locally. The route clears its parsed text fields after the provider
 call, and the GitHub adapter releases its payload and echoed response in `finally` on
 success, failure, or cancellation. The Git provider retains the PR explicitly sent to it.
-Automatic fix generation and scan shipping are still unimplemented.
+Hybrid fix generation and PR creation are implemented separately from `/scans/{id}/ship`,
+which still returns 501.
 
 Application code writes no scan-content temporary files, screenshots, HARs, traces, or
 download artifacts. Browser contexts disable downloads and service workers, request zero
@@ -102,10 +110,71 @@ cryptographic wipe of immutable strings or browser/process memory.
 - `scope: site` follows up to `MAX_SITE_PAGES` same-origin links from the first page.
 - `ALLOW_PRIVATE_TARGETS=true` lets scans hit localhost and private addresses. Turn it off when deployed.
 - One connection for the whole server: there is no user login yet.
-- The repo toggle is stored, but nothing opens PRs yet. That arrives with `POST /scans/{id}/ship`.
+- PR creation requires the repository toggle to be enabled. `/pull-requests` opens PRs
+  between existing branches; `/api/hybrid-scan` commits verified HTML fixes first.
 - Verified against the real GitHub API only for the error path (a bad token returns "Bad credentials"). The OAuth redirect and callback are unit-tested with mocks; a full sign-in needs your OAuth App credentials and has not been run here.
 - The OAuth token is stored unencrypted in the local SQLite file (git-ignored). Encrypt it before deploying.
 
+
+## Hybrid HTML-to-PR
+
+Configure these server environment variables, then restart the backend:
+
+```dotenv
+HYBRID_API_TOKEN=<a separate randomly generated runner token>
+HYBRID_REPO=owner/repo
+HYBRID_FILE_PATH=public/index.html
+HYBRID_BASE_BRANCH=main
+HYBRID_TIMEOUT_SECONDS=300
+TINYFISH_API_KEY=<your TinyFish key>
+```
+
+Connect GitHub using App/OAuth/PAT and enable the configured repository's PR toggle.
+The endpoint modifies only this configured existing HTML file; callers cannot choose a
+different repository or source path. Use a dedicated deployment per target until tenant
+and URL-to-source mappings exist. `url` is validated as metadata, never fetched by the cloud.
+
+```http
+POST /api/hybrid-scan
+Authorization: Bearer <HYBRID_API_TOKEN>
+Content-Type: application/json
+
+{"url":"http://intranet.local/page","raw_html":"<main>...</main>"}
+```
+
+Success returns HTTP 201 with `{"pr_url":"https://github.com/owner/repo/pull/123"}`.
+Use [the local runner](../local_runner.py) with `EQUALINK_CLOUD_TOKEN` set to the same
+bearer token and `--endpoint https://your-cloud.example/api/hybrid-scan`.
+
+The server fetches the original repository source, sends it with observed HTML to the
+[TinyFish SSE API](https://docs.tinyfish.ai/agent-api/reference), and expects `fixed_html`.
+TinyFish starts on a fixed public bootstrap page, never the intranet URL. Its prompt
+requests minimal WCAG changes without following input instructions or altering scripts.
+The server independently rejects changed scripts and rechecks the source with axe in
+network-blocked Chromium. A CSP blocks document scripts; the document is served from RAM.
+Rules must improve in aggregate without any rule/severity count increasing. This check
+covers static HTML only, not application behavior, external CSS, or full WCAG compliance.
+
+The GitHub adapter checks the source blob SHA for concurrent edits, creates a tree based
+on the existing repository tree, commits it, creates a unique branch, then opens a PR.
+It never updates the base branch. Validation, generation, or source-conflict failures
+stop before any GitHub write. Later failures can leave provider-side objects or a branch;
+timeouts/stream disconnects may leave a TinyFish run or PR operation in progress. Check
+provider state before retrying; the endpoint and runner do not automatically retry.
+
+Uploads are limited to 5 MiB of UTF-8 HTML. Input, source, fixed text, and provider payloads
+are released in `finally`, including cancellation paths; no Scan/Issue/Event records or
+content files are created. Invalid input and upstream failures return generic errors
+without echoing source. Set a proxy body limit and request timeout appropriate to these
+limits, and do not enable request-body logging or tracing in production.
+
+**External retention boundary:** TinyFish receives source as goal text, and its API
+exposes original goals/results through run records. No documented per-request deletion
+or zero-retention flag is assumed. Verify an appropriate TinyFish retention agreement
+before confidential use. GitHub necessarily retains the committed fixes and PR.
+Application reference cleanup does not erase these third-party records, browser-managed
+temporary profiles, OS swap, or backups. This endpoint enforces application-level
+non-persistence, not an unverified end-to-end zero-retention guarantee.
 
 ## W3C rules sync
 

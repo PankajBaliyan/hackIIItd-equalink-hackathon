@@ -24,6 +24,12 @@ class Settings(BaseSettings):
     w3c_sync_timeout_seconds: int = 1800
     w3c_sync_schedule: bool = True  # false: only the "Sync now" button runs it
 
+    hybrid_api_token: str = ""  # required bearer token for the customer-side runner
+    hybrid_repo: str = ""
+    hybrid_file_path: str = ""  # explicit source HTML file, never inferred from an intranet URL
+    hybrid_base_branch: str = "main"
+    hybrid_timeout_seconds: int = 300
+
     github_client_id: str = ""
     github_client_secret: str = ""
     github_token: str = ""

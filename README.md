@@ -32,9 +32,9 @@ and orchestration service.
   It requires no inbound connection into the intranet and writes no page-content files.
 - **Cloud Brain:** the [FastAPI backend](./server/README.md) currently provides URL-based
   Playwright/axe-core scans, scores, metadata-only progress events, and PR creation between
-  existing branches. The target workflow adds uploaded-HTML analysis, fix generation,
-  re-validation, and a returned PR link for the runner to print. The HTML-to-PR endpoint
-  and automatic fixing/shipping are not implemented yet.
+  existing branches. `POST /api/hybrid-scan` accepts uploaded HTML, uses TinyFish to propose
+  fixes to a configured repository HTML file, re-validates it with axe, and returns a PR
+  link to the runner. The dashboard's URL-scan automatic fixing/shipping remains planned.
 - **Provider strategies:** [GitProvider](./server/app/git_provider.py) defines
   `create_pull_request()`. [GitHubAdapter](./server/app/github_adapter.py) implements
   GitHub access, and the [provider registry](./server/app/git_providers.py) selects the
@@ -50,12 +50,15 @@ content. The implemented controls keep raw page-analysis results in memory, rele
 after each page, and exclude HTML snippets, selectors, and failure context from SQLite,
 API issue responses, and persisted SSE events. Startup scrubs legacy copies from the
 active database. PR request text and echoed provider responses are released in `finally`
-after success, failure, or cancellation. The future fix-generation stage must follow the
-same policy; it does not exist yet.
+after success, failure, or cancellation. Hybrid uploads, repository source, and proposed
+fixes follow the same in-memory lifecycle and are not saved to the application database.
 
 This content policy permits operational metadata such as scan URLs, rule identifiers,
 severity, scores, repository settings, and integration credentials to remain stored.
-GitHub retains the PR content explicitly submitted to it. Python reference cleanup is
+GitHub retains the commits and PR content explicitly submitted to it. TinyFish receives
+uploaded HTML and repository source in its goal; its API exposes stored goals/results
+through run records. Local cleanup does not erase third-party copies: an enterprise
+retention agreement must be verified before sending confidential content. Python reference cleanup is
 not secure memory erasure: strict deployment enforcement also requires RAM-backed browser
 temporary storage and controls for swap, crash dumps, logs, and backups. See the
 [backend retention details](./server/README.md#scan-content-retention) for these boundaries.
@@ -83,8 +86,8 @@ demo-site/   "ShopEasy", a deliberately broken storefront used for demos  (plann
 ```
 
 The server implements GitHub integration, URL-based scanning, and PR creation for existing
-branches (see [server/README.md](./server/README.md)). Automatic fixes, validated scan
-shipping, and the runner's cloud ingestion endpoint remain planned. See
+branches plus the configured hybrid HTML-to-PR workflow (see [server/README.md](./server/README.md)).
+The dashboard's automatic URL-scan shipping remains planned. See
 [the execution plan](./Docs/EquaLink-Execution-Plan.md) for the broader product design.
 
 ## Planned stack
@@ -152,18 +155,22 @@ Never commit secrets. `.env` files and `*.pem` keys are git-ignored.
 `local_runner.py` is a standalone Python 3.11+ CLI with no third-party dependencies:
 
 ```powershell
-python local_runner.py http://intranet.local/page --endpoint https://your-cloud.example/scans/html
+python local_runner.py http://intranet.local/page --endpoint https://your-cloud.example/api/hybrid-scan
 ```
 
-Alternatively set `EQUALINK_CLOUD_ENDPOINT`. If your cloud requires bearer authentication,
-set `EQUALINK_CLOUD_TOKEN` in the runner's environment (`--token-env` selects another variable).
+Alternatively set `EQUALINK_CLOUD_ENDPOINT`. Set `EQUALINK_CLOUD_TOKEN` in the runner's
+environment to the server's `HYBRID_API_TOKEN` (`--token-env` selects another variable).
 The runner fetches HTML locally, removes script elements and comments, sends only
-`{"html": "..."}`, and prints the response's `pr_url` (or GitProvider `url`). Failures
-return exit code 1. `--timeout` sets the HTTP timeout in seconds, default 60.
+`{"url": "http://intranet.local/page", "raw_html": "..."}`, and prints the response's `pr_url`.
+Failures return exit code 1. `--timeout` sets the HTTP timeout in seconds, default 360.
 
-The cloud endpoint must implement HTML analysis/fixing and return a PR link. This checkout
-does not yet implement that endpoint; `/pull-requests` accepts existing branch metadata,
-and `/scans` accepts a URL rather than uploaded HTML. The URL above is a deployment example.
+Configure `HYBRID_REPO`, `HYBRID_FILE_PATH` (an existing `.html`/`.htm` file),
+`HYBRID_BASE_BRANCH`, `HYBRID_API_TOKEN`, and `TINYFISH_API_KEY` on the server. Connect GitHub
+and enable that repository's PR toggle. The server fetches the original source file so
+runner-side script removal does not remove application code from the resulting commit.
+Only fixes that preserve scripts and reduce axe violations without increasing another
+rule/severity count are committed to a new branch. No-op/unverified fixes return an error.
+See [hybrid endpoint setup](./server/README.md#hybrid-html-to-pr) for limits and retention boundaries.
 The runner fetches source HTML without JavaScript rendering. It preserves semantic markup,
 styles, and event-handler attributes for accessibility checks; it is not a sanitizer for
 personal data, and remaining page text/form values are sent to the configured endpoint.
@@ -175,8 +182,8 @@ EquaLink is an accessibility product, so the dashboard targets WCAG 2.2 AA: sema
 
 ## Roadmap
 
-- **Complete the Hybrid SaaS workflow:** implement the cloud HTML-ingestion endpoint,
-  in-memory fix generation, rules-based re-validation, and validated scan-to-PR shipping.
+- **Expand the Hybrid SaaS workflow:** add multi-file/template-aware fixes, per-tenant URL-to-source
+  mappings, and dashboard integration for the hybrid endpoint and validated scan shipping.
 - **GitLab integration:** add `GitLabAdapter(GitProvider)`, provider-specific credentials
   and account storage, and registry selection for merge request creation.
 - **Bitbucket integration:** add `BitbucketAdapter(GitProvider)` with repository-scoped

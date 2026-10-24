@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Fetch an intranet page locally and submit HTML to an EquaLink cloud worker.
 
-Cloud contract: POST {"html": "..."} -> {"pr_url": "https://..."}.
+Cloud contract: POST {"url": "http://intranet/...", "raw_html": "..."} -> {"pr_url": "https://..."}.
 The endpoint may also return the GitProvider result shape {"number": ..., "url": ...}.
 Uses only Python's standard library; page content is never written to a file.
 """
@@ -106,8 +106,8 @@ class NoCloudRedirects(HTTPRedirectHandler):
         raise RunnerError("Cloud endpoint redirected; supply its final URL explicitly.")
 
 
-def submit_html(endpoint: str, html: str, timeout: float, token: str | None = None) -> str:
-    payload = json.dumps({"html": html}).encode("utf-8")
+def submit_html(endpoint: str, url: str, html: str, timeout: float, token: str | None = None) -> str:
+    payload = json.dumps({"url": url, "raw_html": html}, ensure_ascii=False).encode("utf-8")
     headers = {"Content-Type": "application/json", "Accept": "application/json"}
     if token:
         headers["Authorization"] = f"Bearer {token}"
@@ -144,7 +144,7 @@ def main(argv=None) -> int:
     parser.add_argument("url", type=http_url, help="Local intranet page to fetch")
     parser.add_argument("--endpoint", type=http_url, default=os.environ.get("EQUALINK_CLOUD_ENDPOINT"),
                         help="Cloud HTML-to-PR endpoint (or EQUALINK_CLOUD_ENDPOINT)")
-    parser.add_argument("--timeout", type=float, default=60, help="HTTP timeout in seconds (default: 60)")
+    parser.add_argument("--timeout", type=float, default=360, help="HTTP timeout in seconds (default: 360)")
     parser.add_argument("--token-env", default="EQUALINK_CLOUD_TOKEN", help="Environment variable holding the cloud bearer token")
     args = parser.parse_args(argv)
     if not args.endpoint:
@@ -158,7 +158,7 @@ def main(argv=None) -> int:
         del html
         if not cleaned.strip():
             raise RunnerError("No HTML remained after removing scripts.")
-        print(submit_html(args.endpoint, cleaned, args.timeout, os.environ.get(args.token_env)))
+        print(submit_html(args.endpoint, args.url, cleaned, args.timeout, os.environ.get(args.token_env)))
         return 0
     except HTTPError as exc:
         print(f"HTTP request failed (status {exc.code}).", file=sys.stderr)

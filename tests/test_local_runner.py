@@ -53,7 +53,7 @@ class LocalRunnerTests(unittest.TestCase):
             server.server_close()
             worker.join()
         self.assertEqual(code, 0)
-        self.assertEqual(captured, [({"html": "<h1>Intranet</h1>"}, "Bearer test-token")])
+        self.assertEqual(captured, [({"url": address + "/intranet", "raw_html": "<h1>Intranet</h1>"}, "Bearer test-token")])
         self.assertEqual(output.getvalue().strip(), "https://github.com/org/repo/pull/1")
 
     def test_size_limit(self):
