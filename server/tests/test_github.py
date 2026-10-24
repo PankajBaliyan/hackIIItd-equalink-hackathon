@@ -1,4 +1,5 @@
 import httpx
+import json
 import pytest
 from fastapi.testclient import TestClient
 from sqlmodel import SQLModel
@@ -7,6 +8,9 @@ import app.db as db
 from app import github
 from app.config import Settings, get_settings
 from app.main import app
+from app.git_provider import GitProvider, PullRequest
+from app.github_adapter import GitHubAdapter
+from app import git_providers
 
 
 def make_settings(**kw) -> Settings:
@@ -40,6 +44,92 @@ def client(monkeypatch, tmp_path):
 def test_starts_disconnected(client):
     r = client.get("/integrations/github").json()
     assert r["connected"] is False and r["mode"] == "pat"
+
+
+async def test_adapter_posts_pull_request_and_normalizes_response(monkeypatch):
+    def handler(request):
+        assert request.method == "POST"
+        assert request.url.path == "/repos/octocat/zeta/pulls"
+        assert request.headers["Authorization"] == "Bearer test-token"
+        assert json.loads(request.content) == {
+            "title": "Accessibility fix", "head": "fix/a11y", "base": "main", "body": "Details",
+        }
+        return httpx.Response(201, json={"number": 12, "html_url": "https://github.com/octocat/zeta/pull/12"})
+
+    monkeypatch.setattr(github, "_client", lambda token: httpx.AsyncClient(
+        base_url=github.API, headers={"Authorization": f"Bearer {token}"},
+        transport=httpx.MockTransport(handler),
+    ))
+    adapter = GitHubAdapter("test-token")
+    assert isinstance(adapter, GitProvider)
+    result = await adapter.create_pull_request(
+        repo="octocat/zeta", title="Accessibility fix", head="fix/a11y", base="main", body="Details",
+    )
+    assert result.number == 12 and result.url.endswith("/pull/12")
+
+
+def pr_body(**overrides):
+    return {"repo": "octocat/zeta", "title": "Fix", "head": "fix/a11y", "base": "main", **overrides}
+
+
+def test_pr_route_requires_connection_and_enabled_repo(client):
+    assert client.post("/pull-requests", json=pr_body()).status_code == 409
+    client.post("/integrations/github/connect")
+    assert client.post("/pull-requests", json=pr_body()).status_code == 403
+    assert client.post("/pull-requests", json=pr_body(provider="gitlab")).status_code == 422
+    assert client.post("/pull-requests", json=pr_body(repo="bad/path/extra")).status_code == 422
+
+
+def test_pr_route_selects_strategy_dynamically(client, monkeypatch):
+    client.post("/integrations/github/connect")
+    client.patch("/integrations/github/repos", json={"full_name": "octocat/zeta", "enabled": True})
+    calls = []
+
+    class AlternativeAdapter(GitProvider):
+        async def create_pull_request(self, **kwargs):
+            calls.append(kwargs)
+            return PullRequest(number=7, url="https://example.com/pulls/7")
+
+    async def factory(settings, connection):
+        assert connection.account == "octocat"
+        return AlternativeAdapter()
+
+    monkeypatch.setitem(git_providers.PROVIDERS, "alternative", factory)
+    response = client.post("/pull-requests", json=pr_body(provider="alternative"))
+    assert response.status_code == 201
+    assert response.json() == {"number": 7, "url": "https://example.com/pulls/7"}
+    assert calls == [{"repo": "octocat/zeta", "title": "Fix", "head": "fix/a11y", "base": "main", "body": ""}]
+
+
+def test_pr_route_surfaces_provider_errors(client, monkeypatch):
+    client.post("/integrations/github/connect")
+    client.patch("/integrations/github/repos", json={"full_name": "octocat/zeta", "enabled": True})
+
+    async def fail(self, **kwargs):
+        raise github.GitHubError(422, "GitHub said: No commits between branches")
+
+    monkeypatch.setattr(GitHubAdapter, "create_pull_request", fail)
+    response = client.post("/pull-requests", json=pr_body())
+    assert response.status_code == 502
+    assert response.json()["detail"] == "Git provider rejected the pull request."
+
+
+@pytest.mark.parametrize("mode", ["pat", "oauth", "app"])
+async def test_provider_factory_resolves_existing_auth_modes(monkeypatch, mode):
+    from app.models import GithubConnection
+
+    settings = make_settings(github_token="pat-token", github_app_id="1", github_app_slug="test",
+                             github_app_private_key="test-key")
+    connection = GithubConnection(mode=mode, account="octocat", installation_id=42, access_token="oauth-token")
+
+    async def installation_token(settings, installation_id):
+        assert installation_id == 42
+        return "app-token"
+
+    monkeypatch.setattr(github, "installation_token", installation_token)
+    adapter = await git_providers.get_git_provider("github", settings, connection)
+    assert isinstance(adapter, GitHubAdapter)
+    assert adapter.token == f"{mode}-token"
 
 
 def test_connect_lists_repos_sorted_and_toggle_persists(client):

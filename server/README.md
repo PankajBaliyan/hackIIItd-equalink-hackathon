@@ -45,8 +45,58 @@ Priority if several are set: App, then OAuth, then token. Secrets live only in `
 | POST | `/sites` | Add a site: `{url, repo?}` (bare domains get https://, duplicates rejected) |
 | DELETE | `/sites/{id}` | Stop tracking a site |
 | GET | `/health` | Liveness and active GitHub mode |
+| POST | `/pull-requests` | Open a PR between existing branches in an enabled repository |
 
-## Limits
+## Git provider strategies
+
+`GitProvider` in `app/git_provider.py` defines the async `create_pull_request()` contract.
+`GitHubAdapter` implements it using the existing GitHub HTTP client. The provider registry
+in `app/git_providers.py` resolves the connected account's PAT, OAuth token, or GitHub App
+installation token and constructs the adapter dynamically.
+
+After connecting GitHub and enabling a repository, call `POST /pull-requests` with:
+
+```json
+{
+  "provider": "github",
+  "repo": "owner/repo",
+  "title": "Fix accessibility issues",
+  "head": "fix/accessibility",
+  "base": "main",
+  "body": "Description of the changes already committed to the head branch."
+}
+```
+
+The response contains `number` and `url`. Both branches must already exist. This endpoint
+does not generate fixes or enable scan shipping; `/scans/{id}/ship` still returns 501.
+To add GitLab, implement `GitLabAdapter(GitProvider)` and register an async credential
+factory under `gitlab`. GitLab account storage and connection setup will also be needed;
+the current connection model stores GitHub accounts only.
+
+## Scan content retention
+
+Raw axe results (HTML, DOM selectors, and failure summaries) are processed only within
+the page-analysis function and released in `finally`. SQLite, scan responses, and SSE
+events contain only issue metadata; `html` and `selector` are empty and `context` is null.
+The source-level issue preview is therefore unavailable. Scores, rule identifiers,
+severity, scan URLs, repository settings, and integration credentials remain stored.
+Startup scrubs legacy issue content, progress messages, and scan errors from the active
+database. Existing backups and historical WAL/journal files require separate handling.
+
+PR text is never saved locally. The route clears its parsed text fields after the provider
+call, and the GitHub adapter releases its payload and echoed response in `finally` on
+success, failure, or cancellation. The Git provider retains the PR explicitly sent to it.
+Automatic fix generation and scan shipping are still unimplemented.
+
+Application code writes no scan-content temporary files, screenshots, HARs, traces, or
+download artifacts. Browser contexts disable downloads and service workers, request zero
+disk/media cache, and close after scanning. Chromium still manages temporary profiles;
+`tempfile` alone would not make those memory-only. For a strict infrastructure-level
+memory-only guarantee, run browser profiles/temp storage on a RAM-backed filesystem and
+control swap, crash dumps, logs, and backups. Python `del` releases references, not a
+cryptographic wipe of immutable strings or browser/process memory.
+
+## Pipeline limits
 
 - A scan renders each page in headless Chromium and runs axe-core, then scores it (100 minus weighted issues). It does **not** yet call TinyFish, run the LLM fixer or re-verify, so scans end with issues awaiting human review and no fixes. axe-core cannot see everything: for example a `div` with `onclick` or a placeholder-only input is not flagged, which is what the planned LLM checks are for.
 - `scope: site` follows up to `MAX_SITE_PAGES` same-origin links from the first page.

@@ -1,4 +1,4 @@
-"""Scan pipeline: render pages in headless Chromium, run axe-core, store issues, score the result.
+"""Scan pipeline: render pages, run axe-core in memory, store metadata, score the result.
 
 Automatic fixing (LLM + re-validation) and TinyFish crawling are separate stages that plug in
 between 'crawling' and 'done'; for now a scan ends with diagnosed issues awaiting human review.
@@ -22,6 +22,7 @@ from sqlmodel import Session
 from app.config import Settings, get_settings
 from app.db import engine
 from app.models import EventRow, IssueRow, Scan
+from app.scan_privacy import public_event, public_issue
 
 AXE_JS = (Path(axe_playwright_python.__file__).parent / "axe.min.js").read_text()
 TAGS = {
@@ -67,7 +68,7 @@ def emit(
         payload["counters"] = counters
     if issue is not None:
         payload["issue"] = issue
-    db.add(EventRow(scan_id=scan_id, payload=json.dumps(payload)))
+    db.add(EventRow(scan_id=scan_id, payload=json.dumps(public_event(payload))))
     db.commit()
 
 
@@ -93,10 +94,39 @@ def context_for(violation: dict, node: dict) -> str:
 
 
 def issue_dict(i: IssueRow) -> dict:
-    return {
+    return public_issue({
         "id": i.id, "scan_id": i.scan_id, "page_url": i.page_url, "rule_id": i.rule_id, "wcag_sc": i.wcag_sc,
         "impact": i.impact, "selector": i.selector, "html": i.html, "context": i.context,
-    }
+    })
+
+
+async def analyze_page(page: Page, scan: Scan, url: str) -> list[IssueRow]:
+    """Consume raw DOM results locally; return only non-content issue metadata."""
+    result = await page.evaluate(
+        "tags => axe.run(document, {runOnly: {type: 'tag', values: tags}, resultTypes: ['violations']})",
+        TAGS[scan.level],
+    )
+    seen: set[tuple[str, str]] = set()
+    try:
+        # No raw HTML, targets, or failure summaries enter ORM objects or events.
+        issues = []
+        for violation in result["violations"]:
+            for node in violation["nodes"][:MAX_NODES_PER_RULE]:
+                key = (violation["id"], json.dumps(node.get("target", [])))
+                if key in seen:
+                    continue
+                seen.add(key)
+                issues.append(IssueRow(
+                    id=f"iss_{secrets.token_hex(4)}", scan_id=scan.id, page_url=url,
+                    rule_id=violation["id"], wcag_sc=sc_from_tags(violation.get("tags", [])),
+                    impact=violation.get("impact") if violation.get("impact") in WEIGHT else "minor",
+                    selector="", html="", context=None,
+                ))
+        return issues
+    finally:
+        result.clear()
+        seen.clear()
+        del result, seen
 
 
 async def render(page: Page, url: str) -> None:
@@ -129,13 +159,14 @@ async def run_scan(scan_id: str) -> None:
         if not scan:
             return
         counts = {"critical": 0, "serious": 0, "moderate": 0, "minor": 0}
-        seen: set[tuple[str, str, str]] = set()
         try:
             set_status(db, scan, "crawling")
             async with async_playwright() as pw:
-                browser = await pw.chromium.launch()
+                browser = await pw.chromium.launch(args=["--disk-cache-size=0", "--media-cache-size=0"])
+                context = page = None
                 try:
-                    page = await (await browser.new_context()).new_page()
+                    context = await browser.new_context(accept_downloads=False, service_workers="block")
+                    page = await context.new_page()
                     emit(db, scan_id, "crawling", f"rendering {scan.url}")
                     await render(page, scan.url)
                     urls = [scan.url]
@@ -150,34 +181,19 @@ async def run_scan(scan_id: str) -> None:
                             await render(page, url)
                         emit(db, scan_id, "diagnosing", f"axe-core: WCAG {scan.level} on {urlsplit(url).path or '/'}")
                         await page.evaluate(AXE_JS)
-                        result = await page.evaluate(
-                            "tags => axe.run(document, {runOnly: {type: 'tag', values: tags}, resultTypes: ['violations']})",
-                            TAGS[scan.level],
-                        )
-                        for v in result["violations"]:
-                            impact = v.get("impact") or "minor"
-                            for node in v["nodes"][:MAX_NODES_PER_RULE]:
-                                selector = " ".join(node["target"][0]) if isinstance(node["target"][0], list) else node["target"][0]
-                                key = (v["id"], selector, url)
-                                if key in seen:
-                                    continue
-                                seen.add(key)
-                                row = IssueRow(
-                                    id=f"iss_{secrets.token_hex(4)}", scan_id=scan_id, page_url=url, rule_id=v["id"],
-                                    wcag_sc=sc_from_tags(v.get("tags", [])), impact=impact, selector=selector,
-                                    html=node.get("html", "")[:2000],
-                                    context=context_for(v, node),
-                                )
-                                db.add(row)
-                                db.commit()
-                                counts[impact] += 1
-                                emit(
-                                    db, scan_id, "diagnosing",
-                                    f"{v['id']} (WCAG {row.wcag_sc}) {selector}",
-                                    "issue", counters=dict(counts), issue=issue_dict(row),
-                                )
+                        for row in await analyze_page(page, scan, url):
+                            db.add(row)
+                            db.commit()
+                            counts[row.impact] += 1
+                            emit(
+                                db, scan_id, "diagnosing", "Accessibility issue detected.",
+                                "issue", counters=dict(counts), issue=issue_dict(row),
+                            )
                 finally:
-                    await browser.close()
+                    try:
+                        await browser.close()
+                    finally:
+                        del page, context, browser
 
             total = sum(counts.values())
             scan.score_before = score(counts)
@@ -187,8 +203,8 @@ async def run_scan(scan_id: str) -> None:
             )
             set_status(db, scan, "done")
             emit(db, scan_id, "done", f"scan complete: {total} issue(s)", counters=dict(counts))
-        except Exception as e:  # any failure should surface in the UI, not vanish in a task
-            msg = str(e).splitlines()[0][:300] if str(e) else type(e).__name__
+        except Exception:  # Browser exceptions can contain DOM snippets; never persist their text.
+            msg = "Page analysis failed."
             scan.error = msg
             set_status(db, scan, "failed")
             emit(db, scan_id, "failed", f"scan failed: {msg}")

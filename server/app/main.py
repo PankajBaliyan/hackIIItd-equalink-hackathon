@@ -12,6 +12,7 @@ from app.routes_github import router as github_router
 from app.routes_rule_docs import router as rule_docs_router
 from app.routes_scans import router as scans_router
 from app.routes_sites import router as sites_router
+from app.routes_pull_requests import router as pull_requests_router
 
 
 @asynccontextmanager
@@ -37,6 +38,7 @@ app.include_router(github_router)
 app.include_router(sites_router)
 app.include_router(rule_docs_router)
 app.include_router(scans_router)
+app.include_router(pull_requests_router)
 
 
 @app.get("/health")
