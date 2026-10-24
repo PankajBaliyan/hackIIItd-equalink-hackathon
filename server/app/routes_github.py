@@ -49,19 +49,7 @@ def _disconnected(s: Settings, install_url: str | None = None) -> GithubStatus:
 
 
 async def _token(s: Settings, conn: GithubConnection) -> tuple[str, bool]:
-    """(token, is_installation) for talking to GitHub as this connection."""
-    if conn.mode == "app":
-        if not s.app_configured or conn.installation_id is None:
-            raise HTTPException(409, "GitHub App is no longer configured on the server.")
-        return await github.installation_token(s, conn.installation_id), True
-    if conn.mode == "oauth":
-        if not conn.access_token:
-            raise HTTPException(409, "No GitHub token stored. Connect again.")
-        return conn.access_token, False
-    token = conn.access_token or s.github_token
-    if not token:
-        raise HTTPException(409, "The stored GitHub token is unavailable. Connect again.")
-    return token, False
+    return await github.connection_token(s, conn)
 
 
 async def _status(s: Settings, db: Session, conn: GithubConnection) -> GithubStatus:

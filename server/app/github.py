@@ -5,8 +5,10 @@ from urllib.parse import quote
 
 import httpx
 import jwt
+from fastapi import HTTPException
 
 from app.config import Settings
+from app.models import GithubConnection
 
 API = "https://api.github.com"
 HEADERS = {"Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28"}
@@ -51,6 +53,21 @@ async def installation_token(s: Settings, installation_id: int) -> str:
     async with _client(app_jwt(s)) as c:
         data = await _check(await c.post(f"/app/installations/{installation_id}/access_tokens"))
     return data["token"]
+
+
+async def connection_token(s: Settings, conn: GithubConnection) -> tuple[str, bool]:
+    """Resolve credentials shared by repository listing and PR creation."""
+    if conn.mode == "app":
+        if not s.app_configured or conn.installation_id is None:
+            raise HTTPException(409, "GitHub App is no longer configured on the server.")
+        return await installation_token(s, conn.installation_id), True
+    if conn.mode == "oauth":
+        if not conn.access_token:
+            raise HTTPException(409, "No GitHub token stored. Connect again.")
+        return conn.access_token, False
+    if not s.github_token:
+        raise HTTPException(409, "GITHUB_TOKEN is no longer set on the server.")
+    return s.github_token, False
 
 
 async def installation_account(s: Settings, installation_id: int) -> str:

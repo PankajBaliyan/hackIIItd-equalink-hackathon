@@ -13,6 +13,8 @@ from app.routes_github import router as github_router
 from app.routes_rule_docs import router as rule_docs_router
 from app.routes_scans import router as scans_router
 from app.routes_sites import router as sites_router
+from app.routes_pull_requests import router as pull_requests_router
+from app.routes_hybrid import router as hybrid_router
 
 
 @asynccontextmanager
@@ -50,6 +52,8 @@ app.include_router(github_router)
 app.include_router(sites_router)
 app.include_router(rule_docs_router)
 app.include_router(scans_router)
+app.include_router(pull_requests_router)
+app.include_router(hybrid_router)
 
 # The Fixes workflow is isolated as a sub-application. Routers above take
 # precedence for shared paths such as /integrations/github and /health.

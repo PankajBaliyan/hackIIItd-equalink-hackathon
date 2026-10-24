@@ -16,8 +16,15 @@ uv run uvicorn main:app --host 127.0.0.1 --port 8000 --reload
 .venv/bin/python -m pytest
 ```
 
+On Windows, use `.venv/Scripts/python.exe -m uvicorn app.main:app --port 8000`
+without `--reload` when running Playwright scans or hybrid validation. Uvicorn's
+Windows reload mode selects an event loop without the subprocess support Playwright
+needs. Restart the server manually after code or environment changes. If an inherited
+environment variable overrides a local `.env` value, update or clear it before startup.
+
 In `client/.env` keep `VITE_API_BASE_URL=http://localhost:8000`,
-`VITE_USE_MOCKS=false`, and `VITE_GITHUB_LIVE=true`.
+`VITE_USE_MOCKS=false`, and `VITE_GITHUB_LIVE=true`. Scans stay mocked until their
+endpoints exist.
 
 ## Connect GitHub (pick one mode in `server/.env`)
 
@@ -57,18 +64,132 @@ Priority if several are set: App, then OAuth, then token. Secrets live only in `
 | PATCH | `/scans/{id}/fixes/{fix_id}` | Include or exclude a validated fix |
 | POST | `/scans/{id}/ship` | Revalidate and open one atomic GitHub PR |
 | GET | `/pull-requests` | Persisted PRs for the Pull Requests screen |
+| POST | `/pull-requests` | Open a PR between existing branches in an enabled repository |
+| POST | `/api/hybrid-scan` | Authenticated HTML upload, TinyFish proposal, axe validation, source commit and PR |
 
-## Limits
+## Git provider strategies
+
+`GitProvider` in `app/git_provider.py` defines the async `create_pull_request()` contract.
+`GitHubAdapter` implements it using the existing GitHub HTTP client. The provider registry
+in `app/git_providers.py` resolves the connected account's PAT, OAuth token, or GitHub App
+installation token and constructs the adapter dynamically.
+
+After connecting GitHub and enabling a repository, call `POST /pull-requests` with:
+
+```json
+{
+  "provider": "github",
+  "repo": "owner/repo",
+  "title": "Fix accessibility issues",
+  "head": "fix/accessibility",
+  "base": "main",
+  "body": "Description of the changes already committed to the head branch."
+}
+```
+
+The response contains `number` and `url`. Both branches must already exist. This endpoint
+does not generate fixes or enable scan shipping; `/scans/{id}/ship` still returns 501.
+To add GitLab, implement `GitLabAdapter(GitProvider)` and register an async credential
+factory under `gitlab`. GitLab account storage and connection setup will also be needed;
+the current connection model stores GitHub accounts only.
+
+## Scan content retention
+
+Raw axe results (HTML, DOM selectors, and failure summaries) are processed only within
+the page-analysis function and released in `finally`. SQLite, scan responses, and SSE
+events contain only issue metadata; `html` and `selector` are empty and `context` is null.
+The source-level issue preview is therefore unavailable. Scores, rule identifiers,
+severity, scan URLs, repository settings, and integration credentials remain stored.
+Startup scrubs legacy issue content, progress messages, and scan errors from the active
+database. Existing backups and historical WAL/journal files require separate handling.
+
+PR text is never saved locally. The route clears its parsed text fields after the provider
+call, and the GitHub adapter releases its payload and echoed response in `finally` on
+success, failure, or cancellation. The Git provider retains the PR explicitly sent to it.
+Hybrid fix generation and PR creation are implemented separately from `/scans/{id}/ship`,
+which still returns 501.
+
+Application code writes no scan-content temporary files, screenshots, HARs, traces, or
+download artifacts. Browser contexts disable downloads and service workers, request zero
+disk/media cache, and close after scanning. Chromium still manages temporary profiles;
+`tempfile` alone would not make those memory-only. For a strict infrastructure-level
+memory-only guarantee, run browser profiles/temp storage on a RAM-backed filesystem and
+control swap, crash dumps, logs, and backups. Python `del` releases references, not a
+cryptographic wipe of immutable strings or browser/process memory.
+
+## Pipeline limits
 
 - A scan renders each page in headless Chromium and runs axe-core, then scores it (100 minus weighted issues). It does **not** yet call TinyFish, run the LLM fixer or re-verify, so scans end with issues awaiting human review and no fixes. axe-core cannot see everything: for example a `div` with `onclick` or a placeholder-only input is not flagged, which is what the planned LLM checks are for.
 - `scope: site` follows up to `MAX_SITE_PAGES` same-origin links from the first page.
 - `ALLOW_PRIVATE_TARGETS=true` lets scans hit localhost and private addresses. Turn it off when deployed.
 - One connection for the whole server: there is no user login yet.
-- GitHub tokens are stored server-side in PostgreSQL. Add application-level secret encryption before a public deployment.
-- The repo toggle is stored, but nothing opens PRs yet. That arrives with `POST /scans/{id}/ship`.
+- PR creation requires the repository toggle to be enabled. `/pull-requests` opens PRs
+  between existing branches; `/api/hybrid-scan` commits verified HTML fixes first.
+ - GitHub tokens are stored server-side in PostgreSQL. Add application-level secret encryption before a public deployment.
+ - The repo toggle is stored, and the existing fixes workflow still ships through `POST /scans/{id}/ship`.
 - Verified against the real GitHub API only for the error path (a bad token returns "Bad credentials"). The OAuth redirect and callback are unit-tested with mocks; a full sign-in needs your OAuth App credentials and has not been run here.
 - The OAuth token is stored unencrypted in the local SQLite file (git-ignored). Encrypt it before deploying.
 
+
+## Hybrid HTML-to-PR
+
+Configure these server environment variables, then restart the backend:
+
+```dotenv
+HYBRID_API_TOKEN=<a separate randomly generated runner token>
+HYBRID_REPO=owner/repo
+HYBRID_FILE_PATH=public/index.html
+HYBRID_BASE_BRANCH=main
+HYBRID_TIMEOUT_SECONDS=300
+TINYFISH_API_KEY=<your TinyFish key>
+```
+
+Connect GitHub using App/OAuth/PAT and enable the configured repository's PR toggle.
+The endpoint modifies only this configured existing HTML file; callers cannot choose a
+different repository or source path. Use a dedicated deployment per target until tenant
+and URL-to-source mappings exist. `url` is validated as metadata, never fetched by the cloud.
+
+```http
+POST /api/hybrid-scan
+Authorization: Bearer <HYBRID_API_TOKEN>
+Content-Type: application/json
+
+{"url":"http://intranet.local/page","raw_html":"<main>...</main>"}
+```
+
+Success returns HTTP 201 with `{"pr_url":"https://github.com/owner/repo/pull/123"}`.
+Use [the local runner](../local_runner.py) with `EQUALINK_CLOUD_TOKEN` set to the same
+bearer token and `--endpoint https://your-cloud.example/api/hybrid-scan`.
+
+The server fetches the original repository source, sends it with observed HTML to the
+[TinyFish SSE API](https://docs.tinyfish.ai/agent-api/reference), and expects `fixed_html`.
+TinyFish starts on a fixed public bootstrap page, never the intranet URL. Its prompt
+requests minimal WCAG changes without following input instructions or altering scripts.
+The server independently rejects changed scripts and rechecks the source with axe in
+network-blocked Chromium. A CSP blocks document scripts; the document is served from RAM.
+Rules must improve in aggregate without any rule/severity count increasing. This check
+covers static HTML only, not application behavior, external CSS, or full WCAG compliance.
+
+The GitHub adapter checks the source blob SHA for concurrent edits, creates a tree based
+on the existing repository tree, commits it, creates a unique branch, then opens a PR.
+It never updates the base branch. Validation, generation, or source-conflict failures
+stop before any GitHub write. Later failures can leave provider-side objects or a branch;
+timeouts/stream disconnects may leave a TinyFish run or PR operation in progress. Check
+provider state before retrying; the endpoint and runner do not automatically retry.
+
+Uploads are limited to 5 MiB of UTF-8 HTML. Input, source, fixed text, and provider payloads
+are released in `finally`, including cancellation paths; no Scan/Issue/Event records or
+content files are created. Invalid input and upstream failures return generic errors
+without echoing source. Set a proxy body limit and request timeout appropriate to these
+limits, and do not enable request-body logging or tracing in production.
+
+**External retention boundary:** TinyFish receives source as goal text, and its API
+exposes original goals/results through run records. No documented per-request deletion
+or zero-retention flag is assumed. Verify an appropriate TinyFish retention agreement
+before confidential use. GitHub necessarily retains the committed fixes and PR.
+Application reference cleanup does not erase these third-party records, browser-managed
+temporary profiles, OS swap, or backups. This endpoint enforces application-level
+non-persistence, not an unverified end-to-end zero-retention guarantee.
 
 ## W3C rules sync
 
