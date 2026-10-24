@@ -88,7 +88,7 @@ def create_app(db_path=None):
             scan=Scan(id=scan_id, url=str(payload.url), repo=payload.repo,
                       mode="repo" if payload.repo else "url", level=payload.level,
                       created_at=datetime.now(timezone.utc).isoformat(), is_demo=is_demo),
-            issues=issues, fixes=fixes,
+            issues=issues, fixes=fixes, screenshot=payload.screenshot,
             summary=Summary(accepted=sum(f.validated for f in fixes),
                             rejected=sum(not f.validated for f in fixes),
                             review=len(issues) - len(fixes), included=sum(f.included for f in fixes)),

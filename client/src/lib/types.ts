@@ -29,6 +29,7 @@ export interface Issue {
   context?: string;
   source_file?: string;
   source_line?: number;
+  source_excerpt?: string;
 }
 
 export interface Fix {
@@ -80,6 +81,7 @@ export interface ScanDetail {
   fixes: Fix[];
   pr?: PullRequest;
   summary?: { accepted: number; rejected: number; review: number; included: number };
+  screenshot?: string;
 }
 
 export type ConnectionState = "connecting" | "live" | "reconnecting" | "polling" | "closed";

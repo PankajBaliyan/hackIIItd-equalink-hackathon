@@ -19,6 +19,7 @@ class IssueInput(Model):
     context: str | None = None
     source_file: str | None = None
     source_line: int | None = Field(default=None, ge=1)
+    source_excerpt: str | None = Field(default=None, max_length=20_000)
 
     @field_validator("source_file")
     @classmethod
@@ -48,6 +49,7 @@ class ImportScan(Model):
     page_html: str = Field(min_length=1, max_length=1_000_000)
     issues: list[IssueInput] = Field(max_length=100)
     fixes: list[CandidateFix] = Field(max_length=100)
+    screenshot: str | None = Field(default=None, max_length=2_000_000)
 
     @model_validator(mode="after")
     def coherent_candidates(self):
@@ -109,6 +111,7 @@ class ScanDetail(Model):
     fixes: list[Fix]
     summary: Summary
     pr: PullRequest | None = None
+    screenshot: str | None = Field(default=None, max_length=2_000_000)
 
 
 class ReviewFix(Model):

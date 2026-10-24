@@ -8,6 +8,7 @@ import { ImportFixes } from "@/components/fixes/ImportFixes";
 import { ScanRepo } from "@/components/fixes/ScanRepo";
 import { buildRows, patchText, SEV_RANK, type Row } from "@/components/fixes/model";
 import { PRCard } from "@/components/fixes/PRCard";
+import { RepoAssistant } from "@/components/fixes/RepoAssistant";
 import { FocusHeading } from "@/components/shell/PagePlaceholder";
 import {
   Accordion,
@@ -138,6 +139,23 @@ function Detail({
           </>
         )}
       </dl>
+
+      <section aria-label="Code at issue" className="overflow-hidden rounded-card border bg-surface-2">
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b px-4 py-3">
+          <h4 className="text-sm font-semibold">Code at issue</h4>
+          <span className="font-mono text-xs text-muted">
+            {issue.source_file ?? "Rendered HTML"}{issue.source_line ? `:${issue.source_line}` : ""}
+          </span>
+        </div>
+        <pre className="max-h-48 overflow-auto p-4 font-mono text-xs leading-5 text-text">
+          <code>{issue.source_excerpt ?? issue.html}</code>
+        </pre>
+        {!issue.source_excerpt && issue.source_file && (
+          <p className="border-t px-4 py-2 text-xs text-muted">
+            This element was created or changed at runtime. The scanner identified the responsible script file; review its DOM update around the selector above.
+          </p>
+        )}
+      </section>
 
       {fix ? (
         <>
@@ -361,7 +379,26 @@ export function FixesPage({ id }: { id: string }) {
         <header className="space-y-1">
           <FocusHeading className="text-3xl font-semibold outline-none">Review fixes</FocusHeading>
           <p className="break-all font-mono text-sm text-muted">{scan.url}</p>
+          <p className="max-w-3xl pt-2 text-sm text-muted">
+            Use the review workspace below to understand each accessibility issue, compare the proposed change, and include only fixes you are confident shipping.
+          </p>
         </header>
+
+        <section aria-label="Review steps" className="grid gap-3 sm:grid-cols-3">
+          {[
+            ["1", "Find", "Filter issues by severity, WCAG rule, or status."],
+            ["2", "Understand", "Open an issue to read the explanation and diff."],
+            ["3", "Ship", "Include validated fixes, then open one pull request."],
+          ].map(([number, title, description]) => (
+            <div key={number} className="rounded-card border bg-surface p-4">
+              <div className="flex items-center gap-2">
+                <span className="grid size-7 place-items-center rounded-full bg-brand text-sm font-semibold text-brand-fg">{number}</span>
+                <h2 className="font-semibold">{title}</h2>
+              </div>
+              <p className="mt-2 text-sm text-muted">{description}</p>
+            </div>
+          ))}
+        </section>
 
         {scan.is_demo && (
           <p role="status" className="rounded-card border bg-surface p-4 text-sm text-muted">
@@ -374,6 +411,13 @@ export function FixesPage({ id }: { id: string }) {
             Automated checks cover this static HTML snapshot. Keyboard behavior, image descriptions,
             and full WCAG compliance require human review.
           </p>
+        )}
+        {s.screenshot && (
+          <figure className="overflow-hidden rounded-card border bg-surface">
+            <figcaption className="border-b px-4 py-3 text-sm font-medium">Rendered page preview</figcaption>
+            <img src={s.screenshot} alt="Rendered screenshot of the scanned repository page" className="max-h-[28rem] w-full object-contain object-top" />
+            <p className="border-t px-4 py-3 text-xs text-muted">This preview shows the page after its local JavaScript ran. Network requests were blocked during the scan.</p>
+          </figure>
         )}
         <ScanRepo />
         <details className="rounded-card border bg-surface p-4">
@@ -581,6 +625,8 @@ export function FixesPage({ id }: { id: string }) {
         <div className="fixed inset-x-0 bottom-0 z-30 border-t bg-surface p-3 lg:hidden">
           {shipControls}
         </div>
+
+        <RepoAssistant scan={scan} rows={rows} selectedRow={selectedRow} />
 
         <Dialog open={confirm} onOpenChange={(o) => !shipping && setConfirm(o)}>
           <DialogContent>

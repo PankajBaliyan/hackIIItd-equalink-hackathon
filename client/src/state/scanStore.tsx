@@ -35,6 +35,7 @@ export interface ScanState {
   pullRequests: PullRequest[];
   error: string | null;
   summary: ScanDetail["summary"] | null;
+  screenshot: string | null;
 }
 
 type Action =
@@ -57,6 +58,7 @@ const initial: ScanState = {
   pullRequests: [],
   error: null,
   summary: null,
+  screenshot: null,
 };
 
 function reducer(state: ScanState, a: Action): ScanState {
@@ -73,6 +75,7 @@ function reducer(state: ScanState, a: Action): ScanState {
         fixes: a.fixes,
         pr: a.pr ?? null,
         summary: a.summary ?? null,
+        screenshot: a.screenshot ?? null,
         error: null,
       };
     case "event": {

@@ -15,7 +15,7 @@ RUNNER = Path(__file__).with_name("axe_runner.mjs")
 VALIDATION_SLOTS = asyncio.Semaphore(1)
 
 
-async def analyze(pages: list[str], level="AA", targets=None):
+async def analyze(pages: list[str | dict], level="AA", targets=None):
     node = shutil.which("node")
     if not node:
         raise HTTPException(503, "Node.js is required for axe validation.")

@@ -3,6 +3,7 @@
 import base64
 import html as htmllib
 import re
+import posixpath
 from urllib.parse import quote
 
 from fastapi import HTTPException
@@ -144,6 +145,47 @@ async def fetch_file(api, repo: str, path: str, branch: str) -> str:
         raise HTTPException(422, f"{path} is not valid UTF-8.")
 
 
+def _script_paths(html: str, path: str) -> list[str]:
+    """Return safe, relative repository paths referenced by script tags."""
+    paths = []
+    for src in re.findall(r"<script\b[^>]*\bsrc\s*=\s*(['\"])(.*?)\1", html, re.I | re.S):
+        value = src[1].split("#", 1)[0].split("?", 1)[0]
+        if not value or value.startswith(("http://", "https://", "//", "data:")):
+            continue
+        joined = posixpath.normpath(posixpath.join(posixpath.dirname(path), value.lstrip("/")))
+        if joined.startswith("../") or joined == ".." or not joined.lower().endswith(".js"):
+            continue
+        if joined not in paths:
+            paths.append(joined)
+    return paths[:20]
+
+
+async def fetch_scripts(api, repo: str, html: str, path: str, branch: str) -> list[dict[str, str]]:
+    scripts = []
+    for script_path in _script_paths(html, path):
+        try:
+            content = await fetch_file(api, repo, script_path, branch)
+        except HTTPException:
+            continue
+        if len(content.encode("utf-8")) <= MAX_FILE_BYTES:
+            scripts.append({"source": script_path, "content": content})
+    return scripts
+
+
+def _line_number(text: str, fragment: str) -> int | None:
+    position = text.find(fragment)
+    return text.count("\n", 0, position) + 1 if position >= 0 else None
+
+
+def _excerpt(text: str, line: int | None, radius: int = 2) -> str | None:
+    if not line:
+        return None
+    lines = text.splitlines()
+    start = max(0, line - radius - 1)
+    end = min(len(lines), line + radius)
+    return "\n".join(f"{index + 1:>4} | {lines[index]}" for index in range(start, end))
+
+
 def _candidate(html: str, violation: dict, repo: str):
     rule = violation["rule"]
     if rule == "document-title":
@@ -174,7 +216,9 @@ async def build_import(api, repo: str, path: str | None, level: str = "AA") -> I
     if path not in files:
         raise HTTPException(404, f"{path} is not an HTML file in {repo}.")
     html = await fetch_file(api, repo, path, branch)
-    report = (await analyze([html], level))[0]
+    scripts = await fetch_scripts(api, repo, html, path, branch)
+    report = (await analyze([{"html": html, "scripts": scripts}], level))[0]
+    source_text = {path: html, **{script["source"]: script["content"] for script in scripts}}
 
     issues: list[IssueInput] = []
     fixes: list[CandidateFix] = []
@@ -183,10 +227,14 @@ async def build_import(api, repo: str, path: str | None, level: str = "AA") -> I
         if (v["rule"], v["selector"]) in seen or len(issues) >= 100:
             continue
         seen.add((v["rule"], v["selector"]))
+        source_file = v.get("source_file") or path
+        issue_html = (v.get("html") or "")[:2000] or "<unknown>"
+        source_line = _line_number(source_text.get(source_file, html), issue_html)
         issue = IssueInput(
             id=f"issue-{len(issues) + 1}", rule_id=v["rule"], wcag_sc=_wcag(v.get("tags", [])),
             impact=v.get("impact") or "moderate", selector=v["selector"],
-            html=(v.get("html") or "")[:2000] or "<unknown>", context=v.get("help"), source_file=path,
+            html=issue_html, context=v.get("help"), source_file=source_file,
+            source_line=source_line, source_excerpt=_excerpt(source_text.get(source_file, html), source_line),
         )
         candidate = _candidate(html, v, repo) if len(fixes) < MAX_FIXES else None
         if candidate:
@@ -199,4 +247,5 @@ async def build_import(api, repo: str, path: str | None, level: str = "AA") -> I
         issues.append(issue)
     return ImportScan(
         url=f"https://github.com/{repo}", repo=repo, level=level, page_html=html, issues=issues, fixes=fixes,
+        screenshot=report.get("screenshot"),
     )
