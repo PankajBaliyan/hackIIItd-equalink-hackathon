@@ -45,10 +45,10 @@ export const realApi: ScanApi = {
     return openEventStream({
       url: `${API_BASE_URL}/scans/${id}/events`,
       onEvent,
-      onConnection,
+      ...(onConnection && { onConnection }),
       // Polling fallback: synthesize one event whenever the scan status changes.
       poll: async () => {
-        const { scan } = await this.getScan(id);
+        const { scan } = await realApi.getScan(id);
         if (scan.status === lastStage) return [];
         lastStage = scan.status;
         const e: ScanEvent = {
@@ -67,6 +67,8 @@ let cached: Promise<ScanApi> | undefined;
 
 /** Picks the mock or real implementation from VITE_USE_MOCKS; mocks are code-split. */
 export function getApi(): Promise<ScanApi> {
-  cached ??= USE_MOCKS ? import("@/lib/mocks/mockApi").then((m) => m.mockApi) : Promise.resolve(realApi);
+  cached ??= USE_MOCKS
+    ? import("@/lib/mocks/mockApi").then((m) => m.mockApi)
+    : Promise.resolve(realApi);
   return cached;
 }

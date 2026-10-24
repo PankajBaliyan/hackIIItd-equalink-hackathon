@@ -2,7 +2,9 @@ import { AlertCircle, AlertOctagon, AlertTriangle, Info, type LucideIcon } from 
 
 import { cn } from "@/lib/utils";
 
-export type Severity = "critical" | "serious" | "moderate" | "minor";
+import type { Severity } from "@/lib/types";
+
+export type { Severity };
 
 const META: Record<Severity, { label: string; Icon: LucideIcon; cls: string }> = {
   critical: { label: "Critical", Icon: AlertOctagon, cls: "text-critical" },

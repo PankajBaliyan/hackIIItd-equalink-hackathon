@@ -1,6 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { PagePlaceholder } from "@/components/shell/PagePlaceholder";
-import { navItem } from "@/lib/nav";
+import { FixesPage } from "@/components/fixes/FixesPage";
 
 export const Route = createFileRoute("/scans/$id/fixes")({
   head: () => ({
@@ -15,5 +14,6 @@ export const Route = createFileRoute("/scans/$id/fixes")({
 });
 
 function Page() {
-  return <PagePlaceholder item={navItem("Fixes")} />;
+  const { id } = Route.useParams();
+  return <FixesPage id={id} />;
 }

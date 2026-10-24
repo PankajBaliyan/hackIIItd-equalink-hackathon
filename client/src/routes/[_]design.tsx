@@ -1,6 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { AlertOctagon, AlertTriangle, AlertCircle, Info, CheckCircle2 } from "lucide-react";
+import { MockDebugPanel } from "@/components/design/MockDebugPanel";
 import { PrimitivesShowcase } from "@/components/design/PrimitivesShowcase";
 import { FocusHeading } from "@/components/shell/PagePlaceholder";
 
@@ -220,6 +221,7 @@ function DesignPage() {
         </h2>
         <PrimitivesShowcase />
       </section>
+      {import.meta.env.DEV && <MockDebugPanel />}
     </div>
   );
 }

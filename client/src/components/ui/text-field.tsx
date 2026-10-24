@@ -5,8 +5,8 @@ import { cn } from "@/lib/utils";
 /** a11y: visible <label>, hint and error linked with aria-describedby, aria-invalid on error. */
 export interface TextFieldProps extends React.InputHTMLAttributes<HTMLInputElement> {
   label: string;
-  hint?: string;
-  error?: string;
+  hint?: string | undefined;
+  error?: string | undefined;
 }
 
 const TextField = React.forwardRef<HTMLInputElement, TextFieldProps>(

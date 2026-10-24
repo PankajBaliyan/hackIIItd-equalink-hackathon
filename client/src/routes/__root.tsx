@@ -14,6 +14,7 @@ import "@fontsource-variable/geist-mono";
 
 import appCss from "../styles.css?url";
 import { ThemeProvider, themeScript } from "@/lib/theme";
+import { ScanStoreProvider } from "@/state/scanStore";
 import { Toaster } from "@/components/ui/sonner";
 import { AppShell } from "@/components/shell/AppShell";
 import { FocusHeading } from "@/components/shell/PagePlaceholder";
@@ -117,10 +118,12 @@ function RootComponent() {
   return (
     <QueryClientProvider client={queryClient}>
       <ThemeProvider>
-        <AppShell>
-          <Outlet />
-        </AppShell>
-        <Toaster />
+        <ScanStoreProvider>
+          <AppShell>
+            <Outlet />
+          </AppShell>
+          <Toaster />
+        </ScanStoreProvider>
       </ThemeProvider>
     </QueryClientProvider>
   );

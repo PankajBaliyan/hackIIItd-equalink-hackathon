@@ -1,13 +1,6 @@
 export type Severity = "critical" | "serious" | "moderate" | "minor";
 export type Stage =
-  | "queued"
-  | "crawling"
-  | "diagnosing"
-  | "fixing"
-  | "verifying"
-  | "shipping"
-  | "done"
-  | "failed";
+  "queued" | "crawling" | "diagnosing" | "fixing" | "verifying" | "shipping" | "done" | "failed";
 
 export interface Scan {
   id: string;

@@ -35,8 +35,9 @@
   --dur-base: 220ms;
   --dur-slow: 300ms;
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
-  --shadow-soft: 0 1px 0 0 color-mix(in oklab, var(--text) 4%, transparent) inset,
-    0 1px 2px rgb(0 0 0 / 0.25), 0 8px 24px -12px rgb(0 0 0 / 0.45);
+  --shadow-soft:
+    0 1px 0 0 color-mix(in oklab, var(--text) 4%, transparent) inset, 0 1px 2px rgb(0 0 0 / 0.25),
+    0 8px 24px -12px rgb(0 0 0 / 0.45);
   --gradient-brand: linear-gradient(135deg, var(--accent-c), var(--accent-2));
 }
 
@@ -181,11 +182,16 @@
     background-image:
       radial-gradient(60rem 28rem at 50% -10%, var(--glow), transparent 70%),
       radial-gradient(var(--dot) 1px, transparent 1px);
-    background-size: 100% 100%, 22px 22px;
+    background-size:
+      100% 100%,
+      22px 22px;
     background-attachment: fixed;
     -webkit-font-smoothing: antialiased;
   }
-  h1, h2, h3, h4 {
+  h1,
+  h2,
+  h3,
+  h4 {
     line-height: 1.2;
     font-weight: 600;
     letter-spacing: -0.015em;
@@ -218,7 +224,9 @@
     --dur-base: 1ms;
     --dur-slow: 1ms;
   }
-  *, *::before, *::after {
+  *,
+  *::before,
+  *::after {
     animation-duration: 1ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 1ms !important;
