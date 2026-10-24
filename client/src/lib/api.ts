@@ -11,6 +11,8 @@ import type {
 
 export const API_BASE_URL: string =
   (import.meta.env["VITE_API_BASE_URL"] as string | undefined) ?? "http://localhost:8000";
+/** GitHub calls hit the real backend even while scans are mocked. Set VITE_GITHUB_LIVE=false to mock them too. */
+export const GITHUB_LIVE: boolean = import.meta.env["VITE_GITHUB_LIVE"] !== "false";
 export const USE_MOCKS: boolean = import.meta.env["VITE_USE_MOCKS"] !== "false";
 
 export class ApiError extends Error {
@@ -27,7 +29,17 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     ...init,
     headers: { "Content-Type": "application/json", ...init?.headers },
   });
-  if (!res.ok) throw new ApiError(res.status, (await res.text()) || res.statusText);
+  if (!res.ok) {
+    const body = await res.text();
+    let message = body || res.statusText;
+    try {
+      const detail = (JSON.parse(body) as { detail?: unknown }).detail;
+      if (typeof detail === "string") message = detail;
+    } catch {
+      /* not JSON */
+    }
+    throw new ApiError(res.status, message);
+  }
   return (await res.json()) as T;
 }
 

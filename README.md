@@ -25,11 +25,11 @@ URL / repo ──► TinyFish renders + navigates ──► axe-core + LLM diagn
 ```
 Docs/        Execution plan, frontend build prompt, pitch deck and reference screenshots
 client/      Frontend dashboard (TanStack Start, React 19, Tailwind 4)
-backend/     FastAPI orchestrator, diagnose/fix/ship pipeline  (planned)
+server/      FastAPI backend: GitHub integration live; scan pipeline planned
 demo-site/   "ShopEasy", a deliberately broken storefront used for demos  (planned)
 ```
 
-Only `client/` and `Docs/` exist today. See `Docs/EquaLink-Execution-Plan.md` for the full architecture, data model and API surface.
+`client/`, `server/` and `Docs/` exist today; the server currently implements the GitHub integration only (see `server/README.md`). See `Docs/EquaLink-Execution-Plan.md` for the full architecture, data model and API surface.
 
 ## Planned stack
 
@@ -72,7 +72,11 @@ npm run dev
 
 To use the real backend, set `VITE_USE_MOCKS=false` and point `VITE_API_BASE_URL` at it (default `http://localhost:8000`).
 
-### Backend (planned)
+### Backend (`server/`)
+
+See `server/README.md` to run it and connect GitHub.
+
+Full set of variables the finished backend will need:
 
 Environment variables the backend will need:
 

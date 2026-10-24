@@ -15,6 +15,10 @@ export function useGithubAction<A extends unknown[]>(
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (a: A) => run(await getApi(), ...a),
-    onSuccess: (status) => qc.setQueryData(KEY, status),
+    onSuccess: (status) => {
+      // GitHub App flow: finish on github.com, which redirects back here when done.
+      if (status.install_url) window.location.assign(status.install_url);
+      else qc.setQueryData(KEY, status);
+    },
   });
 }

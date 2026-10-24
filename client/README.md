@@ -13,6 +13,7 @@ npm run dev        # http://localhost:5173
 | Variable | Default | Purpose |
 |---|---|---|
 | `VITE_USE_MOCKS` | `true` | `true` runs the whole app on built-in mock data. |
+| `VITE_GITHUB_LIVE` | `true` | GitHub page talks to the real `server/` even while scans are mocked. |
 | `VITE_API_BASE_URL` | `http://localhost:8000` | FastAPI backend base URL. |
 
 **Switching to the real backend:** set `VITE_USE_MOCKS=false` and point `VITE_API_BASE_URL` at it. No code changes. The client expects `POST /scans`, `GET /scans`, `GET /scans/:id`, `POST /scans/:id/ship` and the SSE stream at `GET /scans/:id/events` (see `Docs/EquaLink-Execution-Plan.md`).

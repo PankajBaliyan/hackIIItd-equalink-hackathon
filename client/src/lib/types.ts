@@ -89,6 +89,10 @@ export interface GithubStatus {
   connected: boolean;
   account?: string;
   repos: GithubRepo[];
+  /** Server auth mode: a GitHub App, a personal access token, or not configured. */
+  mode?: "app" | "pat" | "none";
+  /** When set, the user must finish connecting on GitHub (App install). */
+  install_url?: string;
 }
 
 /** Everything the UI needs from the backend; implemented by the real client and the mock. */
