@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { PagePlaceholder } from "@/components/shell/PagePlaceholder";
-import { navItem } from "@/lib/nav";
+import { BookOpen } from "lucide-react";
+import { ComingSoon } from "@/components/ui/coming-soon";
 
 export const Route = createFileRoute("/docs")({
   head: () => ({
@@ -15,5 +15,16 @@ export const Route = createFileRoute("/docs")({
 });
 
 function Page() {
-  return <PagePlaceholder item={navItem("Docs")} />;
+  return (
+    <ComingSoon
+      icon={BookOpen}
+      title="Docs"
+      summary="Guides and reference for running EquaLink."
+      points={[
+        "Quick start: scan, review and ship your first fix",
+        "How validation works and why the LLM never decides alone",
+        "API reference for the scan endpoints",
+      ]}
+    />
+  );
 }

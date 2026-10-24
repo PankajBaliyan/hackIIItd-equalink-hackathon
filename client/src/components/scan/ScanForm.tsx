@@ -16,6 +16,7 @@ import { useScanStore } from "@/state/scanStore";
 export function parseScanUrl(raw: string): { url: string } | { error: string } {
   const v = raw.trim();
   if (!v) return { error: "Enter the URL you want to scan." };
+  if (/\s/.test(v)) return { error: "That doesn't look like a valid URL." };
   const candidate = /^[a-z][a-z0-9+.-]*:\/\//i.test(v) ? v : `https://${v}`;
   try {
     const u = new URL(candidate);

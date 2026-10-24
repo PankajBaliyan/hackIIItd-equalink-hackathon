@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { PagePlaceholder } from "@/components/shell/PagePlaceholder";
-import { navItem } from "@/lib/nav";
+import { Github } from "lucide-react";
+import { ComingSoon } from "@/components/ui/coming-soon";
 
 export const Route = createFileRoute("/integrations/github")({
   head: () => ({
@@ -15,5 +15,16 @@ export const Route = createFileRoute("/integrations/github")({
 });
 
 function Page() {
-  return <PagePlaceholder item={navItem("GitHub")} />;
+  return (
+    <ComingSoon
+      icon={Github}
+      title="GitHub integration"
+      summary="Install the EquaLink GitHub App so fixes arrive as pull requests."
+      points={[
+        "Scoped permissions: contents and pull requests only",
+        "Every fix is a reviewed PR, never a direct commit",
+        "Pick which repositories EquaLink can open PRs on",
+      ]}
+    />
+  );
 }

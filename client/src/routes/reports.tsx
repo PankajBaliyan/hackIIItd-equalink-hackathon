@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { PagePlaceholder } from "@/components/shell/PagePlaceholder";
-import { navItem } from "@/lib/nav";
+import { FileBarChart } from "lucide-react";
+import { ComingSoon } from "@/components/ui/coming-soon";
 
 export const Route = createFileRoute("/reports")({
   head: () => ({
@@ -15,5 +15,16 @@ export const Route = createFileRoute("/reports")({
 });
 
 function Page() {
-  return <PagePlaceholder item={navItem("Reports")} />;
+  return (
+    <ComingSoon
+      icon={FileBarChart}
+      title="Compliance reports"
+      summary="Exportable WCAG 2.2 AA reports you can hand to auditors and legal teams."
+      points={[
+        "Export as PDF or JSON with every issue, fix and validation result",
+        "Before and after scores with a full audit trail",
+        "Mapped to WCAG 2.2, EAA, ADA and GIGW requirements",
+      ]}
+    />
+  );
 }

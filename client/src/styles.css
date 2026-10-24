@@ -233,3 +233,34 @@
     scroll-behavior: auto !important;
   }
 }
+
+/* Settings override: same collapse as the OS-level reduced-motion preference. */
+:root[data-motion="reduce"] {
+  --dur-fast: 1ms;
+  --dur-base: 1ms;
+  --dur-slow: 1ms;
+}
+:root[data-motion="reduce"] *,
+:root[data-motion="reduce"] *::before,
+:root[data-motion="reduce"] *::after {
+  animation-duration: 1ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 1ms !important;
+  scroll-behavior: auto !important;
+}
+
+@keyframes shimmer {
+  to {
+    background-position: -200% 0;
+  }
+}
+@utility skeleton-shimmer {
+  background-image: linear-gradient(
+    90deg,
+    var(--surface-2) 25%,
+    var(--border-c) 50%,
+    var(--surface-2) 75%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.6s linear infinite;
+}

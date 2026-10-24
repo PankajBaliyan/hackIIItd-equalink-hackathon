@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { History } from "lucide-react";
 
 import { EmptyState } from "@/components/ui/empty-state";
+import { Reveal } from "@/components/ui/reveal";
 import { Skeleton } from "@/components/ui/skeleton";
 import { getApi } from "@/lib/api";
 import type { Scan } from "@/lib/types";
@@ -77,8 +78,8 @@ export function RecentScans() {
         />
       ) : (
         <ul className="divide-y rounded-card border bg-surface">
-          {data.slice(0, 5).map((s) => (
-            <li key={s.id}>
+          {data.slice(0, 5).map((s, i) => (
+            <Reveal key={s.id} index={i}>
               <Link
                 to="/scans/$id"
                 params={{ id: s.id }}
@@ -91,7 +92,7 @@ export function RecentScans() {
                   {ago(s.created_at)}
                 </time>
               </Link>
-            </li>
+            </Reveal>
           ))}
         </ul>
       )}

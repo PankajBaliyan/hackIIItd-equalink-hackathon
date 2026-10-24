@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { PagePlaceholder } from "@/components/shell/PagePlaceholder";
-import { navItem } from "@/lib/nav";
+import { Workflow } from "lucide-react";
+import { ComingSoon } from "@/components/ui/coming-soon";
 
 export const Route = createFileRoute("/integrations/ci")({
   head: () => ({
@@ -21,5 +21,16 @@ export const Route = createFileRoute("/integrations/ci")({
 });
 
 function Page() {
-  return <PagePlaceholder item={navItem("CI / GitHub Action")} />;
+  return (
+    <ComingSoon
+      icon={Workflow}
+      title="CI / GitHub Action"
+      summary="Block accessibility regressions before they merge."
+      points={[
+        "Run EquaLink on every pull request",
+        "Fail the build below a score or severity threshold",
+        "SARIF output for GitHub code scanning",
+      ]}
+    />
+  );
 }

@@ -15,6 +15,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   const [theme, setTheme] = useState<Theme>("dark");
 
   useEffect(() => {
+    applyMotionPref(readMotionPref());
     const t = document.documentElement.getAttribute("data-theme");
     setTheme(t === "light" ? "light" : "dark");
   }, []);
@@ -36,3 +37,22 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
 }
 
 export const useTheme = () => useContext(Ctx);
+
+const MOTION_KEY = "equalink-motion";
+export type MotionPref = "system" | "reduce";
+export function readMotionPref(): MotionPref {
+  try {
+    return localStorage.getItem(MOTION_KEY) === "reduce" ? "reduce" : "system";
+  } catch {
+    return "system";
+  }
+}
+export function applyMotionPref(p: MotionPref) {
+  if (p === "reduce") document.documentElement.setAttribute("data-motion", "reduce");
+  else document.documentElement.removeAttribute("data-motion");
+  try {
+    localStorage.setItem(MOTION_KEY, p);
+  } catch {
+    /* storage unavailable */
+  }
+}

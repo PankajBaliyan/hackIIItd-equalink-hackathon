@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { PagePlaceholder } from "@/components/shell/PagePlaceholder";
-import { navItem } from "@/lib/nav";
+import { Globe } from "lucide-react";
+import { ComingSoon } from "@/components/ui/coming-soon";
 
 export const Route = createFileRoute("/sites")({
   head: () => ({
@@ -15,5 +15,16 @@ export const Route = createFileRoute("/sites")({
 });
 
 function Page() {
-  return <PagePlaceholder item={navItem("Sites")} />;
+  return (
+    <ComingSoon
+      icon={Globe}
+      title="Sites"
+      summary="Track every site you scan in one multi-site dashboard."
+      points={[
+        "Score trend per site over time",
+        "Incremental scans of only the routes that changed",
+        "Agency view across client sites",
+      ]}
+    />
+  );
 }
