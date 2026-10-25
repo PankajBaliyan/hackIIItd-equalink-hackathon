@@ -1,4 +1,4 @@
-"""Scan a GitHub repo's source code (no browser): static rules, then an optional Claude review.
+"""Scan a GitHub repo's source code (no browser): static rules, then an optional OpenAI review.
 
 Issues carry the file and line they were found on, which a later fix and pull request step needs.
 """
@@ -107,20 +107,20 @@ async def scan_repo(db: Session, scan: Scan, s: Settings, counts: dict[str, int]
                     impact=f.impact, snippet=f.snippet, message=f.message, detector="static")
     pipeline.emit(db, scan.id, "diagnosing", f"static checks done on {len(paths)} file(s): {sum(counts.values())} issue(s)")
 
-    if not s.anthropic_api_key:
-        pipeline.emit(db, scan.id, "diagnosing", "Claude review skipped: set ANTHROPIC_API_KEY to add it")
+    if not s.openai_api_key:
+        pipeline.emit(db, scan.id, "diagnosing", "OpenAI review skipped: set OPENAI_API_KEY to add it")
         return
     review_files = {p: files[p] for p in paths[: s.source_llm_max_files]}
-    pipeline.emit(db, scan.id, "diagnosing", f"Claude is reviewing {len(review_files)} file(s) against the saved W3C rules")
+    pipeline.emit(db, scan.id, "diagnosing", f"OpenAI is reviewing {len(review_files)} file(s) against the saved W3C rules")
     try:
         issues = await source_llm.review(
             s, rule_lookup.prompt_context(db), review_files, static, source_llm.make_client(s),
             on_note=lambda m: pipeline.emit(db, scan.id, "diagnosing", m),
         )
     except Exception as e:  # the review is an extra: never fail the scan over it
-        pipeline.emit(db, scan.id, "diagnosing", f"Claude review skipped ({type(e).__name__})")
+        pipeline.emit(db, scan.id, "diagnosing", f"OpenAI review skipped ({type(e).__name__})")
         return
     for i in issues:
         lines = files[i.file].split("\n")
         _record(db, scan, counts, seen, rules, branch=branch, path=i.file, line=i.line, rule_id=i.rule_id, sc=i.wcag_sc,
-                impact=i.impact, snippet=lines[i.line - 1].strip()[:300], message=i.problem, detector="claude")
+                impact=i.impact, snippet=lines[i.line - 1].strip()[:300], message=i.problem, detector="llm")

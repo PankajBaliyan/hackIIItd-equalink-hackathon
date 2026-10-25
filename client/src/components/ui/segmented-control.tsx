@@ -16,17 +16,19 @@ export function SegmentedControl<T extends string>({
   value,
   onValueChange,
   className,
+  labelClassName,
 }: {
   label: string;
   options: SegmentedOption<T>[];
   value: T;
   onValueChange: (v: T) => void;
   className?: string;
+  labelClassName?: string;
 }) {
   const id = React.useId();
   return (
-    <div className={cn("space-y-1.5", className)}>
-      <span id={id} className="text-sm font-medium">
+    <div className={cn("inline-flex items-center gap-3", className)}>
+      <span id={id} className={cn("text-sm font-medium shrink-0", labelClassName)}>
         {label}
       </span>
       <RadioGroup.Root
@@ -34,7 +36,7 @@ export function SegmentedControl<T extends string>({
         value={value}
         onValueChange={(v) => onValueChange(v as T)}
         orientation="horizontal"
-        className="inline-flex w-full rounded-md border bg-surface p-1 sm:w-auto"
+        className="inline-flex gap-1 rounded-md border bg-surface p-1"
       >
         {options.map((o) => (
           <RadioGroup.Item

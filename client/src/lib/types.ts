@@ -30,8 +30,8 @@ export interface Issue {
   source_file?: string;
   source_line?: number;
   /** The saved W3C rule that covers this issue's success criterion, if one is stored. */
-  /** What found it: axe on a rendered page, static rules on source, or Claude's source review. */
-  detector?: "axe" | "static" | "claude";
+  /** What found it: axe on a rendered page, static rules on source, or the LLM review of source. */
+  detector?: "axe" | "static" | "llm";
   rule?: { id: number; title: string; source_url: string | null; excerpt: string } | null;
 }
 

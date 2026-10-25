@@ -4,7 +4,7 @@ import asyncio
 import json
 from types import SimpleNamespace
 
-import anthropic
+import openai
 import httpx
 import pytest
 from sqlmodel import Session, select
@@ -98,7 +98,7 @@ def test_static_scan_finds_issues_with_file_and_line(env):
     assert alt["page_url"] == "https://github.com/o/r/blob/main/src/Form.tsx#L6"
     assert alt["wcag_sc"] == "1.1.1" and alt["impact"] == "critical" and alt["html"] == '<img src="/logo.png" />'
     assert "found 3 source file(s) to check" in events  # Form, Clean, index.html; not node_modules, README or tests
-    assert any("set ANTHROPIC_API_KEY" in e for e in events)
+    assert any("set OPENAI_API_KEY" in e for e in events)
     assert scan.score_before == pipeline.score({"critical": 2, "serious": 3, "moderate": 0, "minor": 0})
 
 
@@ -135,20 +135,21 @@ def test_repo_without_source_files_fails_clearly(env):
 
 
 class FakeClaude:
-    def __init__(self, answer=None, *, stop="end_turn", error=None):
-        self.calls, self.answer, self.stop, self.error = [], answer, stop, error
-        self.beta = SimpleNamespace(messages=SimpleNamespace(create=self.create))
+    def __init__(self, answer=None, *, refusal=None, error=None):
+        self.calls, self.answer, self.refusal, self.error = [], answer, refusal, error
+        self.chat = SimpleNamespace(completions=SimpleNamespace(create=self.create))
 
     async def create(self, **kw):
         self.calls.append(kw)
         if self.error:
             raise self.error
         text = self.answer if isinstance(self.answer, str) else json.dumps(self.answer)
-        return SimpleNamespace(stop_reason=self.stop, content=[SimpleNamespace(type="text", text=text)])
+        msg = SimpleNamespace(content=text, refusal=self.refusal)
+        return SimpleNamespace(choices=[SimpleNamespace(message=msg, finish_reason="stop")])
 
 
 def with_claude(env, fake):
-    env["cfg"] = Settings(_env_file=None, anthropic_api_key="k", database_url=env["cfg"].database_url)
+    env["cfg"] = Settings(_env_file=None, openai_api_key="k", database_url=env["cfg"].database_url)
     env["patch"].setattr(source_llm, "make_client", lambda _s: fake)
 
 
@@ -169,17 +170,16 @@ def test_claude_review_adds_validated_issues_and_uses_the_saved_rules(env):
     with_claude(env, fake)
     scan, issues, events = run(env, github()[0])
     assert scan.status == "done", scan.error
-    claude = [i for i in issues if i["detector"] == "claude"]
+    claude = [i for i in issues if i["detector"] == "llm"]
     assert [(i["source_file"], i["source_line"], i["rule_id"], i["wcag_sc"]) for i in claude] == [("src/Form.tsx", 4, "missing-form-error-text", "3.3.1")]
     assert claude[0]["context"] == "Errors are not described in text." and claude[0]["rule"]["title"] == "Identify Errors"
-    assert any("dropped 4 Claude finding(s)" in e for e in events)
+    assert any("dropped 4 OpenAI finding(s)" in e for e in events)
 
     (call,) = fake.calls
-    assert call["model"] == "claude-opus-5-5" and call["fallbacks"] == "default"
-    assert call["betas"] == ["server-side-fallback-2026-07-01"]
-    assert call["output_config"]["format"]["type"] == "json_schema"
-    assert "SC 3.3.1: Identify Errors: Describe errors in text." in call["system"][0]["text"]
-    user = call["messages"][0]["content"]
+    assert call["model"] == "gpt-4.1"
+    assert call["response_format"]["type"] == "json_schema" and call["response_format"]["json_schema"]["strict"]
+    assert "SC 3.3.1: Identify Errors: Describe errors in text." in call["messages"][0]["content"]
+    user = call["messages"][1]["content"]
     assert "=== src/Form.tsx ===" in user and "   5|       <input type=\"text\"" in user
     assert "line 5: label" in user  # static findings are listed so Claude doesn't repeat them
     assert "node_modules" not in user and "README" not in user
@@ -195,9 +195,9 @@ def test_claude_finding_on_a_line_the_static_rules_already_flagged_is_not_duplic
 @pytest.mark.parametrize(
     "fake,note",
     [
-        (FakeClaude(stop="refusal", answer={"issues": []}), "declined"),
+        (FakeClaude(refusal="I cannot help with that."), "declined"),
         (FakeClaude("not json"), "not valid JSON"),
-        (FakeClaude(error=anthropic.APIConnectionError(request=httpx.Request("POST", "https://x"))), "failed"),
+        (FakeClaude(error=openai.APIConnectionError(request=httpx.Request("POST", "https://x"))), "failed"),
     ],
 )
 def test_claude_problems_never_fail_the_scan(env, fake, note):
@@ -208,11 +208,11 @@ def test_claude_problems_never_fail_the_scan(env, fake, note):
 
 
 def test_claude_reviews_only_the_first_n_files(env):
-    env["cfg"] = Settings(_env_file=None, anthropic_api_key="k", source_llm_max_files=1, database_url=env["cfg"].database_url)
+    env["cfg"] = Settings(_env_file=None, openai_api_key="k", source_llm_max_files=1, database_url=env["cfg"].database_url)
     fake = FakeClaude({"issues": []})
     env["patch"].setattr(source_llm, "make_client", lambda _s: fake)
     run(env, github()[0])
-    user = fake.calls[0]["messages"][0]["content"]
+    user = fake.calls[0]["messages"][1]["content"]
     assert "=== public/index.html ===" in user and "Form.tsx" not in user  # app dirs first, then by path
 
 

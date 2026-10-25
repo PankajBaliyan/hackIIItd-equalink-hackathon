@@ -35,7 +35,7 @@ const ENV = [
   ["VITE_API_BASE_URL", "Backend base URL, default http://localhost:8000"],
   ["TINYFISH_API_KEY", "Backend: TinyFish remote browser for scans, and the W3C rules sync"],
   ["SCAN_ENGINE", "auto (default), tinyfish or local. auto uses TinyFish for public URLs"],
-  ["ANTHROPIC_API_KEY", "Backend: Claude review in repo scans (and fixes, later)"],
+  ["OPENAI_API_KEY", "Backend: OpenAI review in repo scans (and fixes, later)"],
   ["GITHUB_APP_ID / GITHUB_APP_PRIVATE_KEY / GITHUB_WEBHOOK_SECRET", "Backend: GitHub App"],
 ] as const;
 

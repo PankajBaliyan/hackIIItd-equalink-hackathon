@@ -94,7 +94,7 @@ function Detail({
           <StatusChip status={row.status} />
           {fix && <Chip>{fix.strategy === "rule" ? "Rule-based" : "LLM-assisted"}</Chip>}
           {issue.detector === "static" && <Chip>Static check</Chip>}
-          {issue.detector === "claude" && <Chip>AI review</Chip>}
+          {issue.detector === "llm" && <Chip>AI review</Chip>}
         </div>
         <h3 className="text-xl font-semibold">{ruleTitle(issue.rule_id)}</h3>
         {info && <p className="text-sm text-muted">{info.description}</p>}
@@ -134,7 +134,7 @@ function Detail({
             </dd>
           </>
         )}
-        {issue.detector === "static" || issue.detector === "claude" ? (
+        {issue.detector === "static" || issue.detector === "llm" ? (
           <>
             <dt className="text-muted">Source</dt>
             <dd className="break-all font-mono">

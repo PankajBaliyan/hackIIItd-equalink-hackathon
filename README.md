@@ -83,7 +83,7 @@ Environment variables the backend will need:
 | Variable | Purpose |
 |---|---|
 | `TINYFISH_API_KEY` | TinyFish Fetch / Agent / Search |
-| `ANTHROPIC_API_KEY` | Claude for diagnosis and fixes |
+| `OPENAI_API_KEY` | OpenAI for diagnosis and fixes |
 | `GITHUB_APP_ID` | GitHub App identity |
 | `GITHUB_APP_PRIVATE_KEY` | GitHub App signing key |
 | `GITHUB_WEBHOOK_SECRET` | Webhook verification |

@@ -1,6 +1,6 @@
-"""Claude review of source files for accessibility problems the static rules cannot see.
+"""OpenAI review of source files for accessibility problems the static rules cannot see.
 
-Optional: it runs only when ANTHROPIC_API_KEY is set, and a failure never fails the scan. The saved W3C rules
+Optional: it runs only when OPENAI_API_KEY is set, and a failure never fails the scan. The saved W3C rules
 go into the system prompt as reference, and every reported issue is validated against the files that were sent
 (real file, line inside the file, a well-formed WCAG number) before it is stored.
 """
@@ -9,7 +9,7 @@ import json
 import re
 from dataclasses import dataclass
 
-import anthropic
+import openai
 
 from app.config import Settings
 from app.source_rules import Finding
@@ -67,8 +67,8 @@ class LlmIssue:
     problem: str
 
 
-def make_client(s: Settings) -> anthropic.AsyncAnthropic:
-    return anthropic.AsyncAnthropic(api_key=s.anthropic_api_key)
+def make_client(s: Settings) -> openai.AsyncOpenAI:
+    return openai.AsyncOpenAI(api_key=s.openai_api_key)
 
 
 def numbered(text: str) -> str:
@@ -123,35 +123,36 @@ def validate(raw: object, files: dict[str, str]) -> tuple[list[LlmIssue], int]:
 async def review(
     s: Settings, rules_text: str, files: dict[str, str], static: dict[str, list[Finding]], client=None, on_note=None
 ) -> list[LlmIssue]:
-    """Ask Claude about each batch of files. Batches that fail or are declined are skipped with a note."""
+    """Ask the model about each batch of files. Batches that fail or are declined are skipped with a note."""
     client = client or make_client(s)
     note = on_note or (lambda _m: None)
     found: list[LlmIssue] = []
     for n, paths in enumerate(batches(files), 1):
         try:
-            resp = await client.beta.messages.create(
-                model=s.anthropic_model,
-                max_tokens=16000,
-                betas=["server-side-fallback-2026-07-01"],
-                fallbacks="default",
-                system=[{"type": "text", "text": SYSTEM + (rules_text or "(none saved)"), "cache_control": {"type": "ephemeral"}}],
-                output_config={"effort": "medium", "format": {"type": "json_schema", "schema": SCHEMA}},
-                messages=[{"role": "user", "content": prompt(paths, files, static)}],
+            resp = await client.chat.completions.create(
+                model=s.openai_model,
+                max_completion_tokens=16000,
+                messages=[
+                    {"role": "system", "content": SYSTEM + (rules_text or "(none saved)")},
+                    {"role": "user", "content": prompt(paths, files, static)},
+                ],
+                response_format={"type": "json_schema", "json_schema": {"name": "accessibility_issues", "strict": True, "schema": SCHEMA}},
             )
-        except anthropic.APIError as e:
-            note(f"Claude review of batch {n} failed ({type(e).__name__}); skipped")
+        except openai.OpenAIError as e:
+            note(f"OpenAI review of batch {n} failed ({type(e).__name__}); skipped")
             continue
-        if resp.stop_reason == "refusal":
-            note(f"Claude declined to review batch {n}; skipped")
+        choice = resp.choices[0]
+        if choice.message.refusal:
+            note(f"OpenAI declined to review batch {n}; skipped")
             continue
-        text = next((b.text for b in resp.content if b.type == "text"), "")
+        text = choice.message.content or ""
         try:
             raw = json.loads(text)
         except json.JSONDecodeError:
-            note(f"Claude's answer for batch {n} was not valid JSON (stop reason: {resp.stop_reason}); skipped")
+            note(f"The answer for batch {n} was not valid JSON (finish reason: {choice.finish_reason}); skipped")
             continue
         issues, dropped = validate(raw, {p: files[p] for p in paths})
         if dropped:
-            note(f"dropped {dropped} Claude finding(s) that pointed at unknown files or lines")
+            note(f"dropped {dropped} OpenAI finding(s) that pointed at unknown files or lines")
         found += issues
     return found
