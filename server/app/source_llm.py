@@ -120,6 +120,29 @@ def validate(raw: object, files: dict[str, str]) -> tuple[list[LlmIssue], int]:
     return ok, dropped
 
 
+async def ask_json(s: Settings, client, system: str, user: str, label: str, note) -> object | None:
+    """One structured-output call. Returns the parsed JSON, or None (with a note) if it failed, was declined or was malformed."""
+    try:
+        resp = await client.chat.completions.create(
+            model=s.openai_model,
+            max_completion_tokens=16000,
+            messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
+            response_format={"type": "json_schema", "json_schema": {"name": "accessibility_issues", "strict": True, "schema": SCHEMA}},
+        )
+    except openai.OpenAIError as e:
+        note(f"OpenAI review of {label} failed ({type(e).__name__}); skipped")
+        return None
+    choice = resp.choices[0]
+    if choice.message.refusal:
+        note(f"OpenAI declined to review {label}; skipped")
+        return None
+    try:
+        return json.loads(choice.message.content or "")
+    except json.JSONDecodeError:
+        note(f"The answer for {label} was not valid JSON (finish reason: {choice.finish_reason}); skipped")
+        return None
+
+
 async def review(
     s: Settings, rules_text: str, files: dict[str, str], static: dict[str, list[Finding]], client=None, on_note=None
 ) -> list[LlmIssue]:
@@ -128,28 +151,8 @@ async def review(
     note = on_note or (lambda _m: None)
     found: list[LlmIssue] = []
     for n, paths in enumerate(batches(files), 1):
-        try:
-            resp = await client.chat.completions.create(
-                model=s.openai_model,
-                max_completion_tokens=16000,
-                messages=[
-                    {"role": "system", "content": SYSTEM + (rules_text or "(none saved)")},
-                    {"role": "user", "content": prompt(paths, files, static)},
-                ],
-                response_format={"type": "json_schema", "json_schema": {"name": "accessibility_issues", "strict": True, "schema": SCHEMA}},
-            )
-        except openai.OpenAIError as e:
-            note(f"OpenAI review of batch {n} failed ({type(e).__name__}); skipped")
-            continue
-        choice = resp.choices[0]
-        if choice.message.refusal:
-            note(f"OpenAI declined to review batch {n}; skipped")
-            continue
-        text = choice.message.content or ""
-        try:
-            raw = json.loads(text)
-        except json.JSONDecodeError:
-            note(f"The answer for batch {n} was not valid JSON (finish reason: {choice.finish_reason}); skipped")
+        raw = await ask_json(s, client, SYSTEM + (rules_text or "(none saved)"), prompt(paths, files, static), f"batch {n}", note)
+        if raw is None:
             continue
         issues, dropped = validate(raw, {p: files[p] for p in paths})
         if dropped:

@@ -89,7 +89,7 @@ class IssueRow(SQLModel, table=True):
     html: str
     context: str | None = None
     rule_doc_id: int | None = None  # saved W3C rule (RuleDoc) that covers this issue's success criterion
-    detector: str = "axe"  # "axe" (rendered page) | "static" (source rules) | "llm" (OpenAI source review)
+    detector: str = "axe"  # "axe" (rendered page) | "static" (source rules) | "llm" (OpenAI review of a page or its source)
     source_file: str | None = None  # repo scans: path of the file and 1-based line of the problem
     source_line: int | None = None
 

@@ -335,3 +335,70 @@ def test_page_that_navigates_right_after_load_is_still_scanned(env, site, delay_
     scan, rules, _ = result()
     assert scan.status == "done", scan.error
     assert "image-alt" in rules  # the page it landed on, not an error or the page before the redirect
+
+
+# --- OpenAI review of the rendered page ---------------------------------------------------------------
+
+
+class FakeOpenAI:
+    def __init__(self, issues=None, error=None):
+        from types import SimpleNamespace
+
+        self.calls, self.issues, self.error = [], issues, error
+        self.chat = SimpleNamespace(completions=SimpleNamespace(create=self.create))
+
+    async def create(self, **kw):
+        from types import SimpleNamespace
+
+        self.calls.append(kw)
+        if self.error:
+            raise self.error
+        msg = SimpleNamespace(content=json.dumps({"issues": self.issues}), refusal=None)
+        return SimpleNamespace(choices=[SimpleNamespace(message=msg, finish_reason="stop")])
+
+
+def with_openai(env, fake):
+    from app import source_llm
+
+    env["cfg"] = env["cfg"].model_copy(update={"openai_api_key": "k"})
+    env["patch"].setattr(source_llm, "make_client", lambda _s: fake)
+
+
+def llm_issue(selector, **kw):
+    return {"file": selector, "line": 1, "rule_id": "vague-link-text", "wcag_sc": "2.4.4", "impact": "moderate", "problem": "Say where the link goes.", **kw}
+
+
+def test_page_review_adds_issues_with_real_selectors_and_drops_the_rest(env, site):
+    fake = FakeOpenAI([llm_issue("main"), llm_issue("#nope"), llm_issue("main[", rule_id="bad-selector"), llm_issue("html", wcag_sc="two")])
+    with_openai(env, fake)
+    sid = new_scan(site, "local")
+    asyncio.run(pipeline.run_scan(sid))
+    with Session(db.engine()) as s:
+        issues = s.exec(select(IssueRow)).all()
+    llm = [i for i in issues if i.detector == "llm"]
+    assert [(i.rule_id, i.selector, i.wcag_sc) for i in llm] == [("vague-link-text", "main", "2.4.4")]
+    assert llm[0].context == "Say where the link goes." and llm[0].html.startswith("<main")
+    assert any(i.detector == "axe" for i in issues)  # axe results are still there
+    _, _, messages = result()
+    assert any("dropped 3 OpenAI finding(s)" in m for m in messages)
+    assert "Already reported by axe-core:" in fake.calls[0]["messages"][1]["content"]
+
+
+def test_page_review_failure_keeps_the_axe_results(env, site):
+    import httpx
+    import openai
+
+    with_openai(env, FakeOpenAI(error=openai.APIConnectionError(request=httpx.Request("POST", "https://x"))))
+    sid = new_scan(site, "local")
+    asyncio.run(pipeline.run_scan(sid))
+    scan, rules, messages = result()
+    assert scan.status == "done" and "image-alt" in rules
+    assert any("OpenAI review of" in m and "failed" in m for m in messages)
+
+
+def test_page_review_without_a_key_is_axe_only(env, site):
+    sid = new_scan(site, "local")
+    asyncio.run(pipeline.run_scan(sid))
+    scan, rules, messages = result()
+    assert scan.status == "done" and "image-alt" in rules
+    assert any("set OPENAI_API_KEY" in m for m in messages)

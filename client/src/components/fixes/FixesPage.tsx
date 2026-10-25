@@ -134,7 +134,7 @@ function Detail({
             </dd>
           </>
         )}
-        {issue.detector === "static" || issue.detector === "llm" ? (
+        {issue.source_file && issue.detector !== "axe" ? (
           <>
             <dt className="text-muted">Source</dt>
             <dd className="break-all font-mono">

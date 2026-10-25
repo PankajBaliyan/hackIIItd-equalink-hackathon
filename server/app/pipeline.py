@@ -23,7 +23,7 @@ from playwright.async_api import Error as PlaywrightError
 from playwright.async_api import Browser, Page, Playwright, async_playwright
 from sqlmodel import Session, select
 
-from app import rule_lookup, tinyfish_browser
+from app import page_llm, rule_lookup, source_llm, tinyfish_browser
 from app.config import Settings, get_settings
 from app.db import engine
 from app.models import EventRow, IssueRow, RuleDoc, Scan
@@ -253,6 +253,8 @@ async def crawl(
 ) -> None:
     """Render the page(s) in the scan's engine and store the axe violations. `counts` and `seen` survive a retry."""
     scan_id = scan.id
+    client = source_llm.make_client(s) if s.openai_api_key else None
+    rules_text = rule_lookup.prompt_context(db) if client else ""
     async with async_playwright() as pw, open_page(pw, db, scan, s) as page:
         emit(db, scan_id, "crawling", f"rendering {scan.url} in the {'TinyFish' if scan.engine == 'tinyfish' else 'local'} browser")
         await render(page, scan.url)
@@ -268,6 +270,7 @@ async def crawl(
                 await render(page, url)
             emit(db, scan_id, "diagnosing", f"axe-core: WCAG {scan.level} on {urlsplit(url).path or '/'}")
             result = await run_axe(page, scan.level)
+            axe_found: list[tuple[str, str]] = []
             for v in result["violations"]:
                 impact = v.get("impact") or "minor"
                 for node in v["nodes"][:MAX_NODES_PER_RULE]:
@@ -276,6 +279,7 @@ async def crawl(
                     if key in seen:
                         continue
                     seen.add(key)
+                    axe_found.append((v["id"], selector))
                     row = IssueRow(
                         id=f"iss_{secrets.token_hex(4)}", scan_id=scan_id, page_url=url, rule_id=v["id"],
                         wcag_sc=sc_from_tags(v.get("tags", [])), impact=impact, selector=selector,
@@ -291,6 +295,41 @@ async def crawl(
                         f"{v['id']} (WCAG {row.wcag_sc}) {selector}",
                         "issue", counters=dict(counts), issue=issue_dict(row, doc),
                     )
+            if client:
+                await llm_review(db, scan, s, counts, seen, rules, rules_text, page, url, axe_found, client)
+            elif n == 0:
+                emit(db, scan_id, "diagnosing", "OpenAI review skipped: set OPENAI_API_KEY to add it (axe-core results only)")
+
+
+async def llm_review(
+    db: Session, scan: Scan, s: Settings, counts: dict[str, int], seen: set[tuple[str, str, str]],
+    rules: dict[str, RuleDoc], rules_text: str, page: Page, url: str, axe_found: list[tuple[str, str]], client,
+) -> None:
+    """Add the model's findings for one rendered page. Never fails the scan: axe-core's results stand on their own."""
+    emit(db, scan.id, "diagnosing", f"OpenAI is reviewing {urlsplit(url).path or '/'} for what axe-core can't see")
+    try:
+        issues = await page_llm.review(s, rules_text, page, url, axe_found, client, on_note=lambda m: emit(db, scan.id, "diagnosing", m))
+    except Exception as e:
+        emit(db, scan.id, "diagnosing", f"OpenAI review skipped ({type(e).__name__})")
+        return
+    for i in issues:
+        key = (i.rule_id, i.selector, url)
+        if key in seen:
+            continue
+        seen.add(key)
+        doc = rules.get(i.wcag_sc)
+        row = IssueRow(
+            id=f"iss_{secrets.token_hex(4)}", scan_id=scan.id, page_url=url, rule_id=i.rule_id, wcag_sc=i.wcag_sc,
+            impact=i.impact, selector=i.selector, html=i.html, context=i.problem, detector="llm",
+            rule_doc_id=doc.id if doc else None,
+        )
+        db.add(row)
+        db.commit()
+        counts[i.impact] += 1
+        emit(
+            db, scan.id, "diagnosing", f"{i.rule_id} (WCAG {i.wcag_sc}) {i.selector}",
+            "issue", counters=dict(counts), issue=issue_dict(row, doc),
+        )
 
 
 async def run_scan(scan_id: str) -> None:
