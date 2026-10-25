@@ -115,3 +115,19 @@ def test_failed_scan_exposes_its_error_and_ok_scans_do_not(client):
         s.add(scan)
         s.commit()
     assert client.get(f"/scans/{sid}").json()["scan"]["error"] == "example.com showed a bot-protection page"
+
+
+def test_events_resume_with_the_after_query_parameter(client):
+    sid = client.post("/scans", json={"url": "a.com"}).json()["id"]
+    with db.Session(db.engine()) as s:
+        pipeline.emit(s, sid, "diagnosing", "middle")
+        pipeline.emit(s, sid, "done", "finished")
+
+    def messages(**kw):
+        with client.stream("GET", f"/scans/{sid}/events", **kw) as r:
+            return [json.loads(line[6:])["message"] for line in r.iter_lines() if line.startswith("data: ")]
+
+    first = messages()
+    assert first == ["scan queued", "middle", "finished"]
+    assert messages(params={"after": 1}) == ["middle", "finished"]
+    assert messages(params={"after": 2}, headers={"Last-Event-ID": "1"}) == ["finished"]  # the later position wins

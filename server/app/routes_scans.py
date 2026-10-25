@@ -111,13 +111,17 @@ def ship(scan_id: str):
 
 @router.get("/{scan_id}/events")
 async def events(
-    scan_id: str, request: Request, last_event_id: Annotated[str | None, Header()] = None
+    scan_id: str, request: Request, last_event_id: Annotated[str | None, Header()] = None, after: int = 0
 ):
-    """Server-Sent Events: tails the scan's event log until a terminal stage."""
+    """Server-Sent Events: tails the scan's event log until a terminal stage.
+
+    Resumes after the Last-Event-ID header (the browser's own reconnect) or the `after` query parameter (a client
+    that opens a fresh EventSource, which sends no header). The later of the two wins.
+    """
     with Session(engine()) as db:
         if not db.get(Scan, scan_id):
             raise HTTPException(404, "Scan not found.")
-    cursor = int(last_event_id) if last_event_id and last_event_id.isdigit() else 0
+    cursor = max(int(last_event_id) if last_event_id and last_event_id.isdigit() else 0, after)
 
     async def stream() -> AsyncIterator[str]:
         nonlocal cursor
