@@ -13,7 +13,7 @@ from sqlmodel import Session, select
 from app import pipeline, tinyfish_browser
 from app.config import Settings, get_settings
 from app.db import engine, get_session
-from app.models import EventRow, IssueRow, RuleDoc, Scan
+from app.models import EventRow, FixRow, IssueRow, RuleDoc, Scan
 from app.routes_sites import normalize_url, REPO_RE
 
 router = APIRouter(prefix="/scans", tags=["scans"])
@@ -86,7 +86,11 @@ def get_scan(scan_id: str, db: SessionDep):
     issues = db.exec(select(IssueRow).where(IssueRow.scan_id == scan_id)).all()
     ids = {i.rule_doc_id for i in issues if i.rule_doc_id}
     docs = {d.id: d for d in db.exec(select(RuleDoc).where(RuleDoc.id.in_(ids))).all()} if ids else {}  # type: ignore[attr-defined]
-    return {"scan": scan_out(scan), "issues": [pipeline.issue_dict(i, docs.get(i.rule_doc_id)) for i in issues], "fixes": []}
+    fixes = db.exec(select(FixRow).where(FixRow.scan_id == scan_id)).all()
+    return {
+        "scan": scan_out(scan), "issues": [pipeline.issue_dict(i, docs.get(i.rule_doc_id)) for i in issues],
+        "fixes": [pipeline.fix_dict(f) for f in fixes],
+    }
 
 
 @router.post("/{scan_id}/ship")

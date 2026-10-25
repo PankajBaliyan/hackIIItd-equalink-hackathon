@@ -120,14 +120,14 @@ def validate(raw: object, files: dict[str, str]) -> tuple[list[LlmIssue], int]:
     return ok, dropped
 
 
-async def ask_json(s: Settings, client, system: str, user: str, label: str, note) -> object | None:
+async def ask_json(s: Settings, client, system: str, user: str, label: str, note, schema: dict | None = None, name: str = "accessibility_issues") -> object | None:
     """One structured-output call. Returns the parsed JSON, or None (with a note) if it failed, was declined or was malformed."""
     try:
         resp = await client.chat.completions.create(
             model=s.openai_model,
             max_completion_tokens=16000,
             messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
-            response_format={"type": "json_schema", "json_schema": {"name": "accessibility_issues", "strict": True, "schema": SCHEMA}},
+            response_format={"type": "json_schema", "json_schema": {"name": name, "strict": True, "schema": schema or SCHEMA}},
         )
     except openai.OpenAIError as e:
         note(f"OpenAI review of {label} failed ({type(e).__name__}); skipped")

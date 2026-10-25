@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import re
 import socket
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -341,10 +342,11 @@ def test_page_that_navigates_right_after_load_is_still_scanned(env, site, delay_
 
 
 class FakeOpenAI:
-    def __init__(self, issues=None, error=None):
+    def __init__(self, issues=None, error=None, fixes=None):
+        """`fixes`: patched_html by axe rule id, answered for the fix stage (the review call gets `issues`)."""
         from types import SimpleNamespace
 
-        self.calls, self.issues, self.error = [], issues, error
+        self.calls, self.issues, self.error, self.fixes = [], issues or [], error, fixes or {}
         self.chat = SimpleNamespace(completions=SimpleNamespace(create=self.create))
 
     async def create(self, **kw):
@@ -353,7 +355,12 @@ class FakeOpenAI:
         self.calls.append(kw)
         if self.error:
             raise self.error
-        msg = SimpleNamespace(content=json.dumps({"issues": self.issues}), refusal=None)
+        if kw["response_format"]["json_schema"]["name"] == "fixes":
+            ids = {rule: iid for iid, rule in re.findall(r"issue_id: (iss_\w+)\nrule: ([\w-]+)", kw["messages"][1]["content"])}
+            fx = [{"issue_id": ids[r], "patched_html": html, "explanation": "Fixed.", "confidence": 0.8} for r, html in self.fixes.items() if r in ids]
+            msg = SimpleNamespace(content=json.dumps({"fixes": fx}), refusal=None)
+        else:
+            msg = SimpleNamespace(content=json.dumps({"issues": self.issues}), refusal=None)
         return SimpleNamespace(choices=[SimpleNamespace(message=msg, finish_reason="stop")])
 
 
@@ -402,3 +409,66 @@ def test_page_review_without_a_key_is_axe_only(env, site):
     scan, rules, messages = result()
     assert scan.status == "done" and "image-alt" in rules
     assert any("set OPENAI_API_KEY" in m for m in messages)
+
+
+# --- fixes checked in the live page ---------------------------------------------------------------------
+
+
+def fixes_of(sid="scan_t"):
+    from app import routes_scans
+
+    with Session(db.engine()) as s:
+        d = routes_scans.get_scan(sid, s)
+    return {next(i for i in d["issues"] if i["id"] == f["issue_id"])["rule_id"]: f for f in d["fixes"]}, d
+
+
+def test_good_fix_is_validated_in_the_live_page_and_the_page_is_left_untouched(env, site):
+    with_openai(env, FakeOpenAI(fixes={"image-alt": '<img src="x.png" alt="A red square">'}))
+    sid = new_scan(site, "local")
+    asyncio.run(pipeline.run_scan(sid))
+    fixes, detail = fixes_of()
+    fix = fixes["image-alt"]
+    assert fix["validated"] is True and fix["violations_after"] < fix["violations_before"]
+    assert fix["original"] == '<img src="x.png">' and 'alt="A red square"' in fix["patched"]
+    assert detail["scan"]["score_after"] > detail["scan"]["score_before"]
+    _, _, messages = result()
+    assert any(m.startswith("validated image-alt") for m in messages)
+
+
+@pytest.mark.parametrize(
+    "patched,reason",
+    [
+        ('<img src="x.png">', "still reports image-alt"),
+        ('<img src="x.png" alt="ok"><button></button>', "introduces new violations: button-name"),
+    ],
+)
+def test_bad_fix_is_rejected_by_axe(env, site, patched, reason):
+    with_openai(env, FakeOpenAI(fixes={"image-alt": patched}))
+    sid = new_scan(site, "local")
+    asyncio.run(pipeline.run_scan(sid))
+    fix = fixes_of()[0]["image-alt"]
+    assert fix["validated"] is False and reason in fix["rejected_reason"]
+    scan, _, _ = result()
+    assert scan.score_after == scan.score_before
+
+
+def test_fix_stage_failure_keeps_the_scan_and_axe_results(env, site):
+    import httpx
+    import openai
+
+    with_openai(env, FakeOpenAI(error=openai.APIConnectionError(request=httpx.Request("POST", "https://x"))))
+    sid = new_scan(site, "local")
+    asyncio.run(pipeline.run_scan(sid))
+    scan, rules, messages = result()
+    assert scan.status == "done" and "image-alt" in rules
+    assert fixes_of()[0] == {}
+    assert any("left for human review" in m for m in messages)
+
+
+def test_llm_found_page_issues_get_no_fix(env, site):
+    with_openai(env, FakeOpenAI([llm_issue("main")], fixes={"vague-link-text": "<main></main>"}))
+    sid = new_scan(site, "local")
+    asyncio.run(pipeline.run_scan(sid))
+    fixes, detail = fixes_of()
+    assert "vague-link-text" not in fixes
+    assert any(i["detector"] == "llm" for i in detail["issues"])

@@ -27,6 +27,9 @@ class Settings(BaseSettings):
     source_llm_max_files: int = 40
     openai_api_key: str = ""
     openai_model: str = "gpt-4.1"
+    # Fix stage: how many issues get a proposed fix per scan (worst first) and how many go to the model per request.
+    fix_max: int = 30
+    fix_batch: int = 8
 
     # W3C rules sync: a TinyFish agent fetches the latest W3C accessibility rules into the reference docs.
     tinyfish_api_key: str = ""

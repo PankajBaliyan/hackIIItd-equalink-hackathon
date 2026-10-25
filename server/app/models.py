@@ -94,6 +94,27 @@ class IssueRow(SQLModel, table=True):
     source_line: int | None = None
 
 
+class FixRow(SQLModel, table=True):
+    """A proposed fix for one issue and what the rules engine said about it."""
+
+    __tablename__ = "fix"
+
+    id: str = Field(primary_key=True)
+    scan_id: str = Field(index=True)
+    issue_id: str = Field(index=True)
+    strategy: str = "llm"
+    original: str
+    patched: str
+    explanation: str
+    confidence: float
+    validated: bool = False
+    violations_before: int = 0
+    violations_after: int = 0
+    rejected_reason: str | None = None
+    start_line: int | None = None  # repo scans: the lines of the file that `patched` replaces (1-based, inclusive)
+    end_line: int | None = None
+
+
 class EventRow(SQLModel, table=True):
     """Append-only progress log; the SSE endpoint tails it, so it survives reconnects."""
 

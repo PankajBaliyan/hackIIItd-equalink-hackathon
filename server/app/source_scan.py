@@ -7,9 +7,9 @@ import asyncio
 import secrets
 
 from fastapi import HTTPException
-from sqlmodel import Session
+from sqlmodel import Session, select
 
-from app import github, pipeline, rule_lookup, source_llm
+from app import fixer, github, pipeline, rule_lookup, source_llm
 from app.config import Settings
 from app.models import GithubConnection, IssueRow, RuleDoc, Scan
 from app.source_rules import Finding, analyze, is_source_file
@@ -110,17 +110,51 @@ async def scan_repo(db: Session, scan: Scan, s: Settings, counts: dict[str, int]
     if not s.openai_api_key:
         pipeline.emit(db, scan.id, "diagnosing", "OpenAI review skipped: set OPENAI_API_KEY to add it")
         return
+    client = source_llm.make_client(s)
+    rules_text = rule_lookup.prompt_context(db)
     review_files = {p: files[p] for p in paths[: s.source_llm_max_files]}
     pipeline.emit(db, scan.id, "diagnosing", f"OpenAI is reviewing {len(review_files)} file(s) against the saved W3C rules")
     try:
         issues = await source_llm.review(
-            s, rule_lookup.prompt_context(db), review_files, static, source_llm.make_client(s),
+            s, rules_text, review_files, static, client,
             on_note=lambda m: pipeline.emit(db, scan.id, "diagnosing", m),
         )
     except Exception as e:  # the review is an extra: never fail the scan over it
         pipeline.emit(db, scan.id, "diagnosing", f"OpenAI review skipped ({type(e).__name__})")
-        return
+        issues = []
     for i in issues:
         lines = files[i.file].split("\n")
         _record(db, scan, counts, seen, rules, branch=branch, path=i.file, line=i.line, rule_id=i.rule_id, sc=i.wcag_sc,
                 impact=i.impact, snippet=lines[i.line - 1].strip()[:300], message=i.problem, detector="llm")
+    await fix_source(db, scan, s, rules_text, files, client)
+
+
+async def fix_source(db: Session, scan: Scan, s: Settings, rules_text: str, files: dict[str, str], client) -> None:
+    """Propose a patch for each static finding, then re-run the static rules on the patched file. Never fails the scan."""
+    try:
+        issues = fixer.eligible_source_issues(list(db.exec(select(IssueRow).where(IssueRow.scan_id == scan.id)).all()), s.fix_max)
+        if not issues:
+            return
+        note = lambda m: pipeline.emit(db, scan.id, "fixing", m)  # noqa: E731
+        pipeline.set_status(db, scan, "fixing")
+        pipeline.emit(db, scan.id, "fixing", f"OpenAI is proposing fixes for {len(issues)} issue(s)")
+        by_id = {i.id: i for i in issues}
+        per_file: dict[str, list[IssueRow]] = {}
+        for i in issues:
+            per_file.setdefault(i.source_file or "", []).append(i)
+        proposals: list[tuple[str, fixer.Proposal]] = []
+        for path, group in per_file.items():
+            for k in range(0, len(group), s.fix_batch):
+                for p in await fixer.propose_source(s, client, rules_text, path, files[path], group[k : k + s.fix_batch], note):
+                    pipeline.announce_proposal(db, scan.id, by_id[p.issue_id], p)
+                    proposals.append((path, p))
+        if len(proposals) < len(issues):
+            pipeline.emit(db, scan.id, "fixing", f"{len(issues) - len(proposals)} issue(s) got no fix and are left for human review")
+        pipeline.set_status(db, scan, "verifying")
+        pipeline.emit(db, scan.id, "verifying", "re-running the static rules on every patched file")
+        for path, p in proposals:
+            issue = by_id[p.issue_id]
+            original, v = fixer.verify_source(files[path], issue, p)
+            pipeline.save_fix(db, scan.id, issue, p, original, v)
+    except Exception as e:
+        pipeline.emit(db, scan.id, "verifying", f"fix stage stopped ({type(e).__name__}); remaining issues are left for human review")

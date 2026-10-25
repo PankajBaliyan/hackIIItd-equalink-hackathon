@@ -23,10 +23,10 @@ from playwright.async_api import Error as PlaywrightError
 from playwright.async_api import Browser, Page, Playwright, async_playwright
 from sqlmodel import Session, select
 
-from app import page_llm, rule_lookup, source_llm, tinyfish_browser
+from app import fixer, page_llm, rule_lookup, source_llm, tinyfish_browser
 from app.config import Settings, get_settings
 from app.db import engine
-from app.models import EventRow, IssueRow, RuleDoc, Scan
+from app.models import EventRow, FixRow, IssueRow, RuleDoc, Scan
 
 AXE_JS = (Path(axe_playwright_python.__file__).parent / "axe.min.js").read_text()
 TAGS = {
@@ -299,6 +299,94 @@ async def crawl(
                 await llm_review(db, scan, s, counts, seen, rules, rules_text, page, url, axe_found, client)
             elif n == 0:
                 emit(db, scan_id, "diagnosing", "OpenAI review skipped: set OPENAI_API_KEY to add it (axe-core results only)")
+        if client:
+            await fix_site(db, scan, s, rules_text, page, urls, client)
+
+
+def fix_dict(f: FixRow) -> dict:
+    out = {
+        "id": f.id, "issue_id": f.issue_id, "strategy": f.strategy, "original": f.original, "patched": f.patched,
+        "explanation": f.explanation, "confidence": f.confidence, "validated": f.validated,
+        "violations_before": f.violations_before, "violations_after": f.violations_after,
+    }
+    if f.rejected_reason:
+        out["rejected_reason"] = f.rejected_reason
+    return out
+
+
+def announce_proposal(db: Session, scan_id: str, issue: IssueRow, p: "fixer.Proposal") -> None:
+    emit(db, scan_id, "fixing", f"proposed fix for {issue.rule_id} {issue.selector[:60]} (llm, confidence {round(p.confidence * 100)}%)", "fix")
+
+
+def save_fix(db: Session, scan_id: str, issue: IssueRow, p: "fixer.Proposal", original: str, v: "fixer.Verdict") -> None:
+    """Store a proposal with the rules engine's verdict and report it."""
+    db.add(FixRow(
+        id=f"fix_{secrets.token_hex(4)}", scan_id=scan_id, issue_id=issue.id, strategy="llm", original=original,
+        patched=p.patched, explanation=p.explanation, confidence=p.confidence, validated=v.validated,
+        violations_before=v.before, violations_after=v.after, rejected_reason=None if v.validated else v.reason,
+        start_line=p.start_line, end_line=p.end_line,
+    ))
+    db.commit()
+    if v.validated:
+        emit(db, scan_id, "verifying", f"validated {issue.rule_id}: violations {v.before} -> {v.after}", "validated")
+    else:
+        emit(db, scan_id, "verifying", f"rejected {issue.rule_id}: {v.reason}", "rejected")
+
+
+def fix_score(db: Session, scan: Scan, counts: dict[str, int]) -> int:
+    """The score the scan would have if every validated fix were applied."""
+    fixed = {k: 0 for k in counts}
+    for f in db.exec(select(FixRow).where(FixRow.scan_id == scan.id, FixRow.validated == True)).all():  # noqa: E712
+        issue = db.get(IssueRow, f.issue_id)
+        if issue and issue.impact in fixed:
+            fixed[issue.impact] += 1
+    return score({k: max(0, counts[k] - fixed[k]) for k in counts})
+
+
+async def fix_site(
+    db: Session, scan: Scan, s: Settings, rules_text: str, page: Page, urls: list[str], client
+) -> None:
+    """Propose a fix for each axe issue, then check every proposal in the live page. Never fails the scan."""
+    try:
+        issues = fixer.eligible_site_issues(
+            list(db.exec(select(IssueRow).where(IssueRow.scan_id == scan.id)).all()), s.fix_max
+        )
+        if not issues:
+            return
+        note = lambda m: emit(db, scan.id, "fixing", m)  # noqa: E731
+        set_status(db, scan, "fixing")
+        emit(db, scan.id, "fixing", f"OpenAI is proposing fixes for {len(issues)} issue(s)")
+        by_id = {i.id: i for i in issues}
+        proposals: list[fixer.Proposal] = []
+        for k in range(0, len(issues), s.fix_batch):
+            for p in await fixer.propose_site(s, client, rules_text, issues[k : k + s.fix_batch], note):
+                announce_proposal(db, scan.id, by_id[p.issue_id], p)
+                proposals.append(p)
+        if len(proposals) < len(issues):
+            emit(db, scan.id, "fixing", f"{len(issues) - len(proposals)} issue(s) got no fix and are left for human review")
+        set_status(db, scan, "verifying")
+        emit(db, scan.id, "verifying", "re-running axe-core on every proposed fix")
+        current = urls[-1]  # the page left open by the diagnosing loop
+        for url in urls:
+            mine = [p for p in proposals if by_id[p.issue_id].page_url == url]
+            if not mine:
+                continue
+            try:
+                if url != current:
+                    await render(page, url)
+                    current = url
+            except Exception as e:
+                emit(db, scan.id, "verifying", f"couldn't reopen {url} to check its fixes ({type(e).__name__}); left for review")
+                continue
+            for p in mine:
+                issue = by_id[p.issue_id]
+                try:
+                    v = await fixer.verify_site(page, issue, p.patched, TAGS[scan.level], AXE_JS)
+                except Exception as e:
+                    v = fixer.Verdict(False, 0, 0, f"couldn't check it in the browser ({type(e).__name__})")
+                save_fix(db, scan.id, issue, p, issue.html, v)
+    except Exception as e:
+        emit(db, scan.id, "verifying", f"fix stage stopped ({type(e).__name__}); remaining issues are left for human review")
 
 
 async def llm_review(
@@ -370,10 +458,20 @@ async def run_scan(scan_id: str) -> None:
             if saved:
                 emit(db, scan_id, "diagnosing", f"{matched} of {total} issue(s) matched a saved W3C rule")
             scan.score_before = score(counts)
-            emit(
-                db, scan_id, "diagnosing",
-                f"score {scan.score_before}. {total} issue(s) found; automatic fixes need the LLM stage, so they are left for human review",
-            )
+            fixes = db.exec(select(FixRow).where(FixRow.scan_id == scan_id)).all()
+            if s.openai_api_key:
+                scan.score_after = fix_score(db, scan, counts)
+                good = sum(1 for f in fixes if f.validated)
+                emit(
+                    db, scan_id, "verifying",
+                    f"score {scan.score_before} -> {scan.score_after} with {good} validated fix(es) of {total} issue(s); "
+                    f"{len(fixes) - good} rejected, the rest need human review",
+                )
+            else:
+                emit(
+                    db, scan_id, "diagnosing",
+                    f"score {scan.score_before}. {total} issue(s) found; set OPENAI_API_KEY to get proposed fixes, so they are left for human review",
+                )
             set_status(db, scan, "done")
             emit(db, scan_id, "done", f"scan complete: {total} issue(s)", counters=dict(counts))
         except Exception as e:  # any failure should surface in the UI, not vanish in a task

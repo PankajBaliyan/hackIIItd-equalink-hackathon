@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import re
 from types import SimpleNamespace
 
 import openai
@@ -135,14 +136,21 @@ def test_repo_without_source_files_fails_clearly(env):
 
 
 class FakeClaude:
-    def __init__(self, answer=None, *, refusal=None, error=None):
-        self.calls, self.answer, self.refusal, self.error = [], answer, refusal, error
+    def __init__(self, answer=None, *, refusal=None, error=None, fixes=()):
+        self.calls, self.answer, self.refusal, self.error, self.fixes = [], answer, refusal, error, fixes
         self.chat = SimpleNamespace(completions=SimpleNamespace(create=self.create))
+
+    def fixes_for(self, prompt):
+        """The configured fixes (keyed by rule name) for the issues named in a fix prompt, with real issue ids."""
+        ids = {rule: iid for iid, rule in re.findall(r"issue_id: (iss_\w+) \| line \d+ \| ([\w-]+)", prompt)}
+        return [{**f, "issue_id": ids[f["issue_id"]]} for f in self.fixes if f["issue_id"] in ids]
 
     async def create(self, **kw):
         self.calls.append(kw)
         if self.error:
             raise self.error
+        if kw["response_format"]["json_schema"]["name"] == "fixes":  # the fix stage: no proposals unless a test sets them
+            return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=json.dumps({"fixes": self.fixes_for(kw["messages"][1]["content"])}), refusal=None), finish_reason="stop")])
         text = self.answer if isinstance(self.answer, str) else json.dumps(self.answer)
         msg = SimpleNamespace(content=text, refusal=self.refusal)
         return SimpleNamespace(choices=[SimpleNamespace(message=msg, finish_reason="stop")])
@@ -175,7 +183,7 @@ def test_claude_review_adds_validated_issues_and_uses_the_saved_rules(env):
     assert claude[0]["context"] == "Errors are not described in text." and claude[0]["rule"]["title"] == "Identify Errors"
     assert any("dropped 4 OpenAI finding(s)" in e for e in events)
 
-    (call,) = fake.calls
+    (call,) = [c for c in fake.calls if c["response_format"]["json_schema"]["name"] != "fixes"]
     assert call["model"] == "gpt-4.1"
     assert call["response_format"]["type"] == "json_schema" and call["response_format"]["json_schema"]["strict"]
     assert "SC 3.3.1: Identify Errors: Describe errors in text." in call["messages"][0]["content"]
@@ -212,7 +220,7 @@ def test_claude_reviews_only_the_first_n_files(env):
     fake = FakeClaude({"issues": []})
     env["patch"].setattr(source_llm, "make_client", lambda _s: fake)
     run(env, github()[0])
-    user = fake.calls[0]["messages"][1]["content"]
+    user = [c for c in fake.calls if c["response_format"]["json_schema"]["name"] != "fixes"][0]["messages"][1]["content"]
     assert "=== public/index.html ===" in user and "Form.tsx" not in user  # app dirs first, then by path
 
 
@@ -233,3 +241,75 @@ def test_create_repo_scan_needs_a_repo_and_ignores_the_url(env):
             asyncio.run(routes_scans.create_scan(routes_scans.ScanIn(target="repo"), s, env["cfg"]))
         with pytest.raises(Exception, match="Enter a website URL"):
             asyncio.run(routes_scans.create_scan(routes_scans.ScanIn(target="site"), s, env["cfg"]))
+
+
+# --- fix proposals and their validation -----------------------------------------------------------
+
+
+def run_fixes(env, fixes):
+    """Scan the repo with a fake model that proposes `fixes` (issue_id is the rule name; it is swapped for the real id)."""
+    fake = FakeClaude({"issues": []}, fixes=fixes)
+    with_claude(env, fake)
+    scan, _, events = run(env, github()[0])
+    with Session(db.engine()) as s:
+        detail = routes_scans.get_scan("scan_s", s)
+    return scan, detail, events, fake
+
+
+def fx(rule, start, end, replacement, conf=0.9):
+    return {"issue_id": rule, "start_line": start, "end_line": end, "replacement": replacement, "explanation": "Fixed it.", "confidence": conf}
+
+
+def test_valid_fix_is_validated_and_improves_the_score(env):
+    scan, detail, events, _ = run_fixes(env, [fx("image-alt", 6, 6, '      <img src="/logo.png" alt="Company logo" />')])
+    (fix,) = detail["fixes"]
+    issue = next(i for i in detail["issues"] if i["id"] == fix["issue_id"])
+    assert issue["rule_id"] == "image-alt"
+    assert fix["validated"] is True and (fix["violations_before"], fix["violations_after"]) == (3, 2)
+    assert fix["original"].strip() == '<img src="/logo.png" />' and "alt=" in fix["patched"]
+    assert fix["strategy"] == "llm" and fix["confidence"] == 0.9 and "rejected_reason" not in fix
+    assert scan.score_after > scan.score_before
+    assert any("proposed fix for image-alt" in e for e in events) and any(e.startswith("validated image-alt") for e in events)
+
+
+@pytest.mark.parametrize(
+    "proposal,reason",
+    [
+        (fx("image-alt", 6, 6, '      <img src="/logo.png" />'), "still reports image-alt"),
+        (fx("image-alt", 6, 6, '<img src="/logo.png" alt="Logo" /><div onClick={go}>More</div>'), "introduces new violations: click-events-have-key-events"),
+        (fx("image-alt", 1, 2, "export function X() {"), "does not cover the line"),
+        (fx("image-alt", 6, 99, "x"), "line range is not valid"),
+    ],
+)
+def test_bad_fixes_are_rejected_with_a_reason_and_do_not_raise_the_score(env, proposal, reason):
+    scan, detail, events, _ = run_fixes(env, [proposal])
+    (fix,) = detail["fixes"]
+    assert fix["validated"] is False and reason in fix["rejected_reason"]
+    assert scan.score_after == scan.score_before
+    assert any(e.startswith("rejected image-alt") for e in events)
+
+
+def test_unsafe_or_empty_proposals_are_dropped(env):
+    scan, detail, events, _ = run_fixes(env, [fx("image-alt", 6, 6, '<img src="/l.png" alt="x" /><script>x()</script>'), fx("label", 5, 5, "   ")])
+    assert scan.status == "done" and detail["fixes"] == []
+    assert any("got no fix and are left for human review" in e for e in events)
+
+
+def test_only_static_findings_get_fixes_and_the_model_gets_the_file(env):
+    _, detail, _, fake = run_fixes(env, [])
+    fix_calls = [c for c in fake.calls if c["response_format"]["json_schema"]["name"] == "fixes"]
+    prompts = " ".join(c["messages"][1]["content"] for c in fix_calls)
+    assert "=== src/Form.tsx ===" in prompts and "   6|       <img src=\"/logo.png\" />" in prompts
+    assert "issue_id: iss_" in prompts
+
+
+def test_without_a_key_no_fixes_are_proposed(env):
+    scan, detail, events = run(env, github()[0])
+    assert detail_fixes(scan) == [] and scan.score_after is None
+
+
+def detail_fixes(scan):
+    from app import routes_scans
+
+    with Session(db.engine()) as s:
+        return routes_scans.get_scan(scan.id, s)["fixes"]
