@@ -1,12 +1,11 @@
-import asyncio
 import time
 from urllib.parse import urlencode
-from typing import Annotated, Literal
+from typing import Annotated
 
 import jwt
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import RedirectResponse
-from pydantic import BaseModel, Field, SecretStr
+from pydantic import BaseModel
 from sqlmodel import Session, delete, select
 
 from app import github
@@ -40,16 +39,17 @@ class RepoPatch(BaseModel):
     enabled: bool
 
 
-class TokenConnect(BaseModel):
-    token: SecretStr = Field(min_length=20, max_length=500)
-
-
 def _disconnected(s: Settings, install_url: str | None = None) -> GithubStatus:
     return GithubStatus(connected=False, mode=s.github_mode, install_url=install_url)
 
 
 async def _token(s: Settings, conn: GithubConnection) -> tuple[str, bool]:
-    return await github.connection_token(s, conn)
+    """(token, is_installation) for talking to GitHub as this connection."""
+    if conn.mode == "oauth":
+        if not conn.access_token:
+            raise HTTPException(409, "No GitHub token stored. Connect again.")
+        return conn.access_token, False
+    raise HTTPException(409, "Invalid GitHub connection mode.")
 
 
 async def _status(s: Settings, db: Session, conn: GithubConnection) -> GithubStatus:
@@ -95,18 +95,9 @@ async def status(s: SettingsDep, db: SessionDep):
         return _disconnected(s)
     try:
         return await _status(s, db, conn)
-    except HTTPException as e:
-        if e.status_code == 409:
-            # A legacy PAT connection may have depended on GITHUB_TOKEN from
-            # the environment. If that secret was removed, forget the stale
-            # row so the dashboard can show its token-entry form again.
-            db.exec(delete(GithubConnection))
-            db.commit()
-            return _disconnected(s)
-        raise
     except github.GitHubError as e:
-        if e.status == 401:
-            # The user revoked or expired the token: forget the dead connection.
+        if e.status == 401 and conn.mode == "oauth":
+            # The user revoked EquaLink on GitHub: forget the dead token.
             db.exec(delete(GithubConnection))
             db.commit()
             return _disconnected(s)
@@ -117,52 +108,14 @@ async def status(s: SettingsDep, db: SessionDep):
 async def connect(s: SettingsDep, db: SessionDep):
     if s.github_mode == "none":
         raise HTTPException(
-            400, "GitHub isn't configured on the server. Set GITHUB_TOKEN, or the GITHUB_APP_* variables, in server/.env."
+            400, "GitHub isn't configured on the server. Set GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET in server/.env."
         )
-    if s.github_mode in ("app", "oauth") and not s.state_secret:
+    if not s.state_secret:
         raise HTTPException(500, "STATE_SECRET is not set in server/.env.")
     try:
-        if s.github_mode == "oauth":
-            return _disconnected(s, install_url=github.oauth_authorize_url(s, _sign_state(s, "gh-oauth")))
-        if s.github_mode == "app":
-            url = f"https://github.com/apps/{s.github_app_slug}/installations/new?state={_sign_state(s)}"
-            return _disconnected(s, install_url=url)
-        conn = _save(db, "pat", await github.pat_user(s.github_token))
-        return await _status(s, db, conn)
+        return _disconnected(s, install_url=github.oauth_authorize_url(s, _sign_state(s, "gh-oauth")))
     except github.GitHubError as e:
         raise HTTPException(502, e.message)
-
-
-@router.post("/token", response_model=GithubStatus)
-async def connect_token(body: TokenConnect, s: SettingsDep, db: SessionDep):
-    """Validate a pasted PAT and keep it server-side; it is never returned to the browser."""
-    token = body.token.get_secret_value().strip()
-    if not token:
-        raise HTTPException(422, "A GitHub token is required.")
-    try:
-        account = await github.pat_user(token)
-        conn = _save(db, "pat", account, access_token=token)
-        return await _status(s, db, conn)
-    except github.GitHubError as e:
-        status = e.status if 400 <= e.status < 500 else 502
-        raise HTTPException(status, e.message)
-
-
-@router.get("/callback")
-async def callback(
-    s: SettingsDep,
-    db: SessionDep,
-    installation_id: Annotated[int, Query()],
-    state: Annotated[str, Query()],
-):
-    """GitHub App 'Setup URL': GitHub redirects here after the user installs the app."""
-    _check_state(s, state)
-    try:
-        account = await github.installation_account(s, installation_id)
-    except github.GitHubError as e:
-        raise HTTPException(502, e.message)
-    _save(db, "app", account, installation_id)
-    return RedirectResponse(f"{s.frontend_url}/integrations/github?connected=1")
 
 
 @router.get("/oauth/callback")
@@ -212,127 +165,3 @@ async def set_repo(body: RepoPatch, s: SettingsDep, db: SessionDep):
         if r.full_name == body.full_name:
             r.enabled = body.enabled
     return status_now
-
-
-# --- Pull requests (a GitHub-style list and "Open a pull request" form) -------------------
-
-REPO_RE = r"^[\w.-]+/[\w.-]+$"
-RepoQuery = Annotated[str, Query(pattern=REPO_RE)]
-BranchQuery = Annotated[str, Query(min_length=1, max_length=250)]
-
-
-class PullSummary(BaseModel):
-    repo: str
-    number: int
-    title: str
-    state: Literal["open", "closed", "merged"]
-    draft: bool
-    author: str
-    head: str
-    base: str
-    url: str
-    created_at: str
-    updated_at: str
-    body: str
-
-
-class BranchList(BaseModel):
-    default: str
-    branches: list[str]
-
-
-class CompareCommit(BaseModel):
-    sha: str
-    message: str
-
-
-class CompareFile(BaseModel):
-    filename: str
-    status: str
-    additions: int
-    deletions: int
-
-
-class CompareResult(BaseModel):
-    ahead_by: int
-    behind_by: int
-    status: str
-    commits: list[CompareCommit]
-    files: list[CompareFile]
-
-
-class NewPull(BaseModel):
-    repo: str = Field(pattern=REPO_RE)
-    base: str = Field(min_length=1, max_length=250)
-    head: str = Field(min_length=1, max_length=250)
-    title: str = Field(min_length=1, max_length=256)
-    body: str = Field(default="", max_length=65536)
-    draft: bool = False
-
-
-async def _repo_token(s: Settings, db: Session, repo: str, *, need_enabled: bool = True) -> str:
-    conn = db.get(GithubConnection, 1)
-    if not conn:
-        raise HTTPException(409, "GitHub is not connected.")
-    if need_enabled:
-        setting = db.get(RepoSetting, repo)
-        if setting is None or not setting.enabled:
-            raise HTTPException(403, f"Turn on {repo} in the GitHub integration first.")
-    token, _ = await _token(s, conn)
-    return token
-
-
-@router.get("/pulls", response_model=list[PullSummary])
-async def list_pulls(
-    s: SettingsDep,
-    db: SessionDep,
-    repo: Annotated[str | None, Query(pattern=REPO_RE)] = None,
-    state: Annotated[Literal["open", "closed", "all"], Query()] = "open",
-):
-    """Pull requests of one enabled repository, or of every enabled repository."""
-    if repo:
-        repos = [repo]
-    else:
-        repos = [r.full_name for r in db.exec(select(RepoSetting).where(RepoSetting.enabled)).all()][:10]
-    try:
-        token = await _repo_token(s, db, repos[0]) if repos else None
-        if token is None:
-            return []
-        results = await asyncio.gather(*(github.list_pulls(token, r, state) for r in repos))
-    except github.GitHubError as e:
-        raise HTTPException(502 if e.status >= 500 or e.status == 401 else e.status, e.message)
-    pulls = [p for group in results for p in group]
-    return sorted(pulls, key=lambda p: p["created_at"], reverse=True)
-
-
-@router.get("/branches", response_model=BranchList)
-async def list_branches(repo: RepoQuery, s: SettingsDep, db: SessionDep):
-    token = await _repo_token(s, db, repo)
-    try:
-        default, names = await github.list_branches(token, repo)
-    except github.GitHubError as e:
-        raise HTTPException(502 if e.status >= 500 else e.status, e.message)
-    return BranchList(default=default, branches=sorted(names, key=lambda n: (n != default, n.lower())))
-
-
-@router.get("/compare", response_model=CompareResult)
-async def compare_branches(repo: RepoQuery, base: BranchQuery, head: BranchQuery, s: SettingsDep, db: SessionDep):
-    token = await _repo_token(s, db, repo)
-    try:
-        return await github.compare(token, repo, base, head)
-    except github.GitHubError as e:
-        raise HTTPException(502 if e.status >= 500 else e.status, e.message)
-
-
-@router.post("/pulls", response_model=PullSummary, status_code=201)
-async def create_pull(body: NewPull, s: SettingsDep, db: SessionDep):
-    """Open a pull request. EquaLink never merges it."""
-    if body.base == body.head:
-        raise HTTPException(422, "Choose two different branches to compare.")
-    token = await _repo_token(s, db, body.repo)
-    try:
-        return await github.create_pull(
-            token, body.repo, body.base, body.head, body.title.strip(), body.body, body.draft
-        )
-    except github.GitHubError as e:
-        raise HTTPException(502 if e.status >= 500 or e.status == 401 else e.status, e.message)

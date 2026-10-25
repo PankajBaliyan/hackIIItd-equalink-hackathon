@@ -107,9 +107,18 @@ export function LiveScan({ id }: { id: string }) {
           {scan.url}
         </FocusHeading>
         <div className="flex flex-wrap items-center gap-2">
-          <Chip>WCAG {scan.level}</Chip>
-          <Chip>{scan.scope === "site" ? "Full site" : "Single page"}</Chip>
-          <Chip>{scan.mode === "repo" ? "Repo connected" : "URL only"}</Chip>
+          {scan.mode !== "source" && <Chip>WCAG {scan.level}</Chip>}
+          {scan.mode === "source" ? (
+            <Chip>Source code</Chip>
+          ) : (
+            <>
+              <Chip>{scan.scope === "site" ? "Full site" : "Single page"}</Chip>
+              <Chip>{scan.mode === "repo" ? "Repo connected" : "URL only"}</Chip>
+              {scan.engine && scan.engine !== "source" && (
+                <Chip>{scan.engine === "tinyfish" ? "TinyFish browser" : "Local browser"}</Chip>
+              )}
+            </>
+          )}
           {elapsed && (
             <Chip>
               Elapsed <span className="tabular">{elapsed}</span>

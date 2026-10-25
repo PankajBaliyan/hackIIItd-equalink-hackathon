@@ -5,16 +5,16 @@ export type Stage =
 export interface Scan {
   id: string;
   url: string;
-  mode: "url" | "repo";
+  /** "repo": a site scan with a repo attached for PRs. "source": the repo's code is scanned. */
+  mode: "url" | "repo" | "source";
   level: "A" | "AA" | "AAA";
   scope: "page" | "site";
+  /** Where pages were rendered: a TinyFish remote browser, or Chromium on the server. */
+  engine?: "tinyfish" | "local" | "source";
   status: Stage;
   score_before?: number;
   score_after?: number;
   created_at: string;
-  repo?: string | null;
-  is_demo?: boolean;
-  validation_engine?: "axe-core";
 }
 
 export interface Issue {
@@ -29,7 +29,10 @@ export interface Issue {
   context?: string;
   source_file?: string;
   source_line?: number;
-  source_excerpt?: string;
+  /** The saved W3C rule that covers this issue's success criterion, if one is stored. */
+  /** What found it: axe on a rendered page, static rules on source, or the LLM review of source. */
+  detector?: "axe" | "static" | "llm";
+  rule?: { id: number; title: string; source_url: string | null; excerpt: string } | null;
 }
 
 export interface Fix {
@@ -44,7 +47,6 @@ export interface Fix {
   violations_before: number;
   violations_after: number;
   rejected_reason?: string;
-  included?: boolean;
 }
 
 export interface PullRequest {
@@ -67,7 +69,10 @@ export interface ScanEvent {
 
 /** Request body for POST /scans. */
 export interface CreateScanInput {
-  url: string;
+  /** Required for a site scan. A repo scan takes `repo` instead. */
+  url?: string;
+  /** "repo" scans the repository's source code; default "site" scans a rendered page. */
+  target?: "site" | "repo";
   repo?: string;
   level: Scan["level"];
   scope: Scan["scope"];
@@ -80,8 +85,6 @@ export interface ScanDetail {
   issues: Issue[];
   fixes: Fix[];
   pr?: PullRequest;
-  summary?: { accepted: number; rejected: number; review: number; included: number };
-  screenshot?: string;
 }
 
 export type ConnectionState = "connecting" | "live" | "reconnecting" | "polling" | "closed";
@@ -102,70 +105,14 @@ export interface GithubStatus {
   install_url?: string;
 }
 
-export interface PullSummary {
-  repo: string;
-  number: number;
-  title: string;
-  state: "open" | "closed" | "merged";
-  draft: boolean;
-  author: string;
-  head: string;
-  base: string;
-  url: string;
-  created_at: string;
-  updated_at: string;
-  body: string;
-}
-
-export interface BranchList {
-  default: string;
-  branches: string[];
-}
-
-export interface CompareResult {
-  ahead_by: number;
-  behind_by: number;
-  status: string;
-  commits: { sha: string; message: string }[];
-  files: { filename: string; status: string; additions: number; deletions: number }[];
-}
-
-export interface NewPull {
-  repo: string;
-  base: string;
-  head: string;
-  title: string;
-  body: string;
-  draft: boolean;
-}
-
-export interface RepoFiles {
-  repo: string;
-  branch: string;
-  files: string[];
-}
-
 /** Everything the UI needs from the backend; implemented by the real client and the mock. */
 export interface ScanApi {
   createScan(input: CreateScanInput): Promise<Scan>;
   listScans(): Promise<Scan[]>;
   getScan(id: string): Promise<ScanDetail>;
-  importScan(payload: unknown): Promise<ScanDetail>;
-  /** HTML files in a connected repository that can be scanned. */
-  listRepoFiles(repo: string): Promise<RepoFiles>;
-  /** Read a repository file, find accessibility issues and build validated fixes. */
-  scanRepo(repo: string, path?: string): Promise<ScanDetail>;
-  setFixIncluded(id: string, fixId: string, included: boolean): Promise<ScanDetail>;
-  listPullRequests(): Promise<PullRequest[]>;
-  /** Pull requests on GitHub for one enabled repo, or all enabled repos. */
-  listGithubPulls(state: "open" | "closed" | "all", repo?: string): Promise<PullSummary[]>;
-  listBranches(repo: string): Promise<BranchList>;
-  compareBranches(repo: string, base: string, head: string): Promise<CompareResult>;
-  createPull(input: NewPull): Promise<PullSummary>;
   ship(id: string, fixIds?: string[]): Promise<PullRequest>;
   getGithub(): Promise<GithubStatus>;
   connectGithub(): Promise<GithubStatus>;
-  connectGithubToken(token: string): Promise<GithubStatus>;
   disconnectGithub(): Promise<GithubStatus>;
   setGithubRepo(fullName: string, enabled: boolean): Promise<GithubStatus>;
   /** Streams events until the scan finishes; returns an unsubscribe function. */

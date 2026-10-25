@@ -64,10 +64,11 @@ class RuleSync(SQLModel, table=True):
 class Scan(SQLModel, table=True):
     id: str = Field(primary_key=True)
     url: str
-    mode: str  # "url" | "repo"
+    mode: str  # "url" | "repo" (URL scan with a repo attached for PRs) | "source" (the repo's code is scanned)
     level: str  # A | AA | AAA
     scope: str  # page | site
     repo: str | None = None
+    engine: str = "local"  # "tinyfish" (remote browser) | "local" (Chromium on this server) | "source" (no browser)
     status: str = "queued"
     score_before: int | None = None
     score_after: int | None = None
@@ -87,6 +88,10 @@ class IssueRow(SQLModel, table=True):
     selector: str
     html: str
     context: str | None = None
+    rule_doc_id: int | None = None  # saved W3C rule (RuleDoc) that covers this issue's success criterion
+    detector: str = "axe"  # "axe" (rendered page) | "static" (source rules) | "llm" (OpenAI review of a page or its source)
+    source_file: str | None = None  # repo scans: path of the file and 1-based line of the problem
+    source_line: int | None = None
 
 
 class EventRow(SQLModel, table=True):

@@ -100,6 +100,8 @@ function Detail({
           <SeverityBadge severity={issue.impact} />
           <StatusChip status={row.status} />
           {fix && <Chip>{fix.strategy === "rule" ? "Rule-based" : "LLM-assisted"}</Chip>}
+          {issue.detector === "static" && <Chip>Static check</Chip>}
+          {issue.detector === "llm" && <Chip>AI review</Chip>}
         </div>
         <h3 className="text-xl font-semibold">{ruleTitle(issue.rule_id)}</h3>
         {info && <p className="text-sm text-muted">{info.description}</p>}
@@ -118,17 +120,61 @@ function Detail({
             <span className="sr-only"> (opens in a new tab)</span>
           </a>
         </dd>
-        <dt className="text-muted">Page</dt>
-        <dd className="break-all font-mono">{issue.page_url}</dd>
-        <dt className="text-muted">Selector</dt>
-        <dd className="break-all font-mono">{issue.selector}</dd>
-        {issue.source_file && (
+        {issue.rule && (
+          <>
+            <dt className="text-muted">W3C rule</dt>
+            <dd className="space-y-1">
+              <span className="block font-medium">{issue.rule.title}</span>
+              <span className="block text-muted">{issue.rule.excerpt}</span>
+              {issue.rule.source_url?.split(", ").map((url) => (
+                <a
+                  key={url}
+                  href={url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex max-w-full items-center gap-1 break-all font-mono text-xs text-muted underline underline-offset-2 hover:text-text"
+                >
+                  {url} <ExternalLink aria-hidden className="size-3 shrink-0" />
+                  <span className="sr-only"> (opens in a new tab)</span>
+                </a>
+              ))}
+            </dd>
+          </>
+        )}
+        {issue.source_file && issue.detector !== "axe" ? (
           <>
             <dt className="text-muted">Source</dt>
             <dd className="break-all font-mono">
-              {issue.source_file}
-              {issue.source_line ? `:${issue.source_line}` : ""}
+              <a
+                href={issue.page_url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1 text-text underline underline-offset-2 hover:text-brand-2"
+              >
+                {issue.source_file}
+                {issue.source_line ? `:${issue.source_line}` : ""}
+                <ExternalLink aria-hidden className="size-3 shrink-0" />
+                <span className="sr-only"> (opens on GitHub in a new tab)</span>
+              </a>
             </dd>
+            <dt className="text-muted">Code</dt>
+            <dd className="break-all font-mono">{issue.selector}</dd>
+          </>
+        ) : (
+          <>
+            <dt className="text-muted">Page</dt>
+            <dd className="break-all font-mono">{issue.page_url}</dd>
+            <dt className="text-muted">Selector</dt>
+            <dd className="break-all font-mono">{issue.selector}</dd>
+            {issue.source_file && (
+              <>
+                <dt className="text-muted">Source</dt>
+                <dd className="break-all font-mono">
+                  {issue.source_file}
+                  {issue.source_line ? `:${issue.source_line}` : ""}
+                </dd>
+              </>
+            )}
           </>
         )}
         {issue.context && (

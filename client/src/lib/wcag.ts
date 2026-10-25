@@ -50,6 +50,30 @@ export const RULE_TITLES: Record<string, { title: string; description: string }>
     title: "Keyboard focus trap",
     description: "Keyboard users must be able to move focus out of every component.",
   },
+  "click-events-have-key-events": {
+    title: "Click handler on a non-interactive element",
+    description: "Use a native button or link, or add a role, tabindex and key handler.",
+  },
+  "html-has-lang": {
+    title: "Page language is not set",
+    description: "The lang attribute lets screen readers choose the right pronunciation.",
+  },
+  "frame-title": {
+    title: "Frame has no title",
+    description: "Iframes need a title that describes their content.",
+  },
+  tabindex: {
+    title: "Positive tabindex",
+    description: "A tabindex above 0 overrides the natural tab order. Fix the DOM order instead.",
+  },
+  "video-caption": {
+    title: "Video has no captions",
+    description: "Prerecorded video with audio needs synchronized captions.",
+  },
+  "meta-viewport": {
+    title: "Zoom is disabled",
+    description: "Do not block pinch-zoom with user-scalable=no or maximum-scale=1.",
+  },
   "link-name": {
     title: "Link has no accessible name",
     description: "Links need discernible text so their purpose is announced.",
