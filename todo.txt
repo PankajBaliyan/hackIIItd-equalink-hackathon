@@ -52,9 +52,6 @@ polling fallback, severity counters, elapsed timer, pages list, sidebar link to 
 
 3. The "Shipping" step in the stepper is never reached (PRs are not built, see Scan Now item 1).
 
-4. Minor: with zero scans the sidebar Live Scan / Fixes links fall back to the hardcoded id "demo" and open
-   "Couldn't load this scan". (client/src/lib/nav.ts: DEMO_SCAN_ID, client/src/components/shell/AppShell.tsx)
-
 Done:
 - Finished or failed scans now open with their stored log. New GET /scans/{id}/log returns the events as JSON and
   the store loads it for a scan that is already over, so the log, elapsed timer and the stepper stage (the stage a
@@ -84,6 +81,10 @@ Done:
   past its top sent the whole UI to the top. The agent log's hidden screen-reader labels were also escaping the log
   and adding 24px of blank scroll area per log line under the page; the log is now their containing block.
   (client/src/components/scan/AnnotatedScreenshot.tsx, TerminalFeed.tsx)
+- The sidebar no longer links Live Scan / Fixes to a made-up "demo" scan. With no scans yet they are shown greyed
+  out and not clickable (title "Run a scan first", read out by screen readers as "run a scan first"); once a scan
+  exists they link to the most recent one. The hardcoded DEMO_SCAN_ID is gone; nav items now carry `needsScan`.
+  (client/src/lib/nav.ts, client/src/components/shell/AppShell.tsx)
 
 
 ===================================================================================
