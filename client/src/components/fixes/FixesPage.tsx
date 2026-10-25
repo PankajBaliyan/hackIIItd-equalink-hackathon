@@ -8,7 +8,6 @@ import { ImportFixes } from "@/components/fixes/ImportFixes";
 import { ScanRepo } from "@/components/fixes/ScanRepo";
 import { buildRows, patchText, SEV_RANK, type Row } from "@/components/fixes/model";
 import { PRCard } from "@/components/fixes/PRCard";
-import { RepoAssistant } from "@/components/fixes/RepoAssistant";
 import { FocusHeading } from "@/components/shell/PagePlaceholder";
 import {
   Accordion,
@@ -296,8 +295,12 @@ export function FixesPage({ id }: { id: string }) {
   const includedRows = rows.filter((r) => r.fix?.validated && r.fix.included !== false);
   const selectedRow = rows.find((r) => r.issue.id === selected) ?? null;
   const repoMode = scan?.mode === "repo";
+  const selectIssue = (issueId: string | null) => {
+    setSelected(issueId);
+    s.selectIssue(issueId);
+  };
   useEffect(() => {
-    setSelected(null);
+    selectIssue(null);
     setConfirm(false);
   }, [id]);
   const files = [
@@ -559,7 +562,7 @@ export function FixesPage({ id }: { id: string }) {
                               <button
                                 type="button"
                                 aria-pressed={selected === r.issue.id}
-                                onClick={() => setSelected(r.issue.id)}
+                                onClick={() => selectIssue(r.issue.id)}
                                 className={cn(
                                   "w-full space-y-1.5 rounded-card border bg-surface p-3 text-left hover:bg-surface-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
                                   selected === r.issue.id && "border-brand bg-surface-2",
@@ -609,7 +612,7 @@ export function FixesPage({ id }: { id: string }) {
                 />
               )
             ) : (
-              <Sheet open={!!selectedRow} onOpenChange={(o) => !o && setSelected(null)}>
+              <Sheet open={!!selectedRow} onOpenChange={(o) => !o && selectIssue(null)}>
                 <SheetContent side="bottom" className="max-h-[85vh] overflow-y-auto">
                   <SheetHeader>
                     <SheetTitle>Issue detail</SheetTitle>
@@ -626,7 +629,6 @@ export function FixesPage({ id }: { id: string }) {
           {shipControls}
         </div>
 
-        <RepoAssistant scan={scan} rows={rows} selectedRow={selectedRow} />
 
         <Dialog open={confirm} onOpenChange={(o) => !shipping && setConfirm(o)}>
           <DialogContent>

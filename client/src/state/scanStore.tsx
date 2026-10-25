@@ -36,6 +36,7 @@ export interface ScanState {
   error: string | null;
   summary: ScanDetail["summary"] | null;
   screenshot: string | null;
+  selectedIssueId: string | null;
 }
 
 type Action =
@@ -45,6 +46,7 @@ type Action =
   | { type: "event"; event: ScanEvent }
   | { type: "connection"; connection: ConnectionState }
   | { type: "pr"; pr: PullRequest }
+  | { type: "selectIssue"; id: string | null }
   | { type: "error"; error: string };
 
 const initial: ScanState = {
@@ -59,6 +61,7 @@ const initial: ScanState = {
   error: null,
   summary: null,
   screenshot: null,
+  selectedIssueId: null,
 };
 
 function reducer(state: ScanState, a: Action): ScanState {
@@ -100,6 +103,8 @@ function reducer(state: ScanState, a: Action): ScanState {
         pr: a.pr,
         pullRequests: [a.pr, ...state.pullRequests.filter((p) => p.scan_id !== a.pr.scan_id)],
       };
+    case "selectIssue":
+      return { ...state, selectedIssueId: a.id };
     case "error":
       return { ...state, error: a.error };
   }
@@ -111,6 +116,7 @@ interface StoreValue extends ScanState {
   openScan(id: string): void;
   ship(fixIds?: string[]): Promise<PullRequest>;
   setFixIncluded(fixId: string, included: boolean): Promise<void>;
+  selectIssue(id: string | null): void;
   reset(): void;
 }
 
@@ -198,6 +204,8 @@ export function ScanStoreProvider({ children }: { children: ReactNode }) {
     if (activeId.current === id) dispatch({ type: "detail", ...detail });
   }, []);
 
+  const selectIssue = useCallback((id: string | null) => dispatch({ type: "selectIssue", id }), []);
+
   const reset = useCallback(() => {
     unsub.current?.();
     activeId.current = null;
@@ -207,8 +215,8 @@ export function ScanStoreProvider({ children }: { children: ReactNode }) {
   useEffect(() => () => unsub.current?.(), []);
 
   const value = useMemo<StoreValue>(
-    () => ({ ...state, startScan, openScan, ship, setFixIncluded, reset }),
-    [state, startScan, openScan, ship, setFixIncluded, reset],
+    () => ({ ...state, startScan, openScan, ship, setFixIncluded, selectIssue, reset }),
+    [state, startScan, openScan, ship, setFixIncluded, selectIssue, reset],
   );
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

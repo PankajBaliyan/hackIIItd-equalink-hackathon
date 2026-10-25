@@ -18,6 +18,7 @@ import { ScanStoreProvider } from "@/state/scanStore";
 import { Toaster } from "@/components/ui/sonner";
 import { AppShell } from "@/components/shell/AppShell";
 import { FocusHeading } from "@/components/shell/PagePlaceholder";
+import { RepoAssistant } from "@/components/fixes/RepoAssistant";
 
 function NotFoundComponent() {
   return (
@@ -124,6 +125,7 @@ function RootComponent() {
           <AppShell>
             <Outlet />
           </AppShell>
+          <RepoAssistant />
           <Toaster />
         </ScanStoreProvider>
       </ThemeProvider>
