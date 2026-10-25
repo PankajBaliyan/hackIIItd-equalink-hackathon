@@ -472,3 +472,72 @@ def test_llm_found_page_issues_get_no_fix(env, site):
     fixes, detail = fixes_of()
     assert "vague-link-text" not in fixes
     assert any(i["detector"] == "llm" for i in detail["issues"])
+
+
+# --- full-site crawl -------------------------------------------------------------------------------------
+
+SITE = {
+    "/": '<a href="/a">A</a> <a href="/b/">B</a> <a href="https://elsewhere.example/x">out</a> <a href="/doc.pdf">pdf</a> <a href="/boom">boom</a> <a href="/#top">top</a>',
+    "/a": '<a href="/c">C</a> <a href="/">home</a> <a href="/b">B again</a>',
+    "/b": "<p>b</p>",
+    "/c": "<p>c</p>",
+}
+
+
+@pytest.fixture
+def multi_site():
+    class H(BaseHTTPRequestHandler):
+        def do_GET(self):
+            if self.path == "/boom":
+                self.connection.close()  # no response at all: the navigation fails
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html")
+            self.end_headers()
+            body = SITE.get(self.path.rstrip("/") or "/", "<p>x</p>")
+            self.wfile.write(f'<!doctype html><html lang="en"><head><title>t</title></head><body><main><img src="x.png">{body}</main></body></html>'.encode())
+
+        def log_message(self, *_a):
+            pass
+
+    srv = HTTPServer(("127.0.0.1", 0), H)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    yield f"http://127.0.0.1:{srv.server_port}/"
+    srv.shutdown()
+
+
+def site_scan(sid="scan_t", url="http://x/"):
+    with Session(db.engine()) as s:
+        s.add(Scan(id=sid, url=url, mode="url", level="AA", scope="site", engine="local"))
+        s.commit()
+    return sid
+
+
+def scanned_paths():
+    from urllib.parse import urlsplit
+
+    with Session(db.engine()) as s:
+        return sorted({urlsplit(i.page_url).path for i in s.exec(select(IssueRow)).all()})
+
+
+def test_site_scan_follows_links_on_every_page_and_skips_external_files_and_failures(env, multi_site):
+    asyncio.run(pipeline.run_scan(site_scan(url=multi_site)))
+    scan, _, messages = result()
+    assert scan.status == "done"
+    assert scanned_paths() == ["/", "/a", "/b/", "/c"]  # /c is only linked from /a; /b/ and /b are one page
+    assert any("/boom" in m and "skipped" in m for m in messages)
+    assert not any("page limit reached" in m for m in messages)
+
+
+def test_site_scan_stops_at_the_page_limit_and_says_so(env, multi_site):
+    env["cfg"] = env["cfg"].model_copy(update={"max_site_pages": 2})
+    asyncio.run(pipeline.run_scan(site_scan(url=multi_site)))
+    scan, _, messages = result()
+    assert scan.status == "done" and len(scanned_paths()) == 2
+    assert any("page limit reached" in m and "raise MAX_SITE_PAGES" in m for m in messages)
+
+
+def test_single_page_scope_does_not_crawl(env, multi_site):
+    sid = new_scan(multi_site, "local")
+    asyncio.run(pipeline.run_scan(sid))
+    assert scanned_paths() == ["/"]

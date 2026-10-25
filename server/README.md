@@ -42,7 +42,7 @@ In `client/.env` keep `VITE_API_BASE_URL=http://localhost:8000` and `VITE_GITHUB
 ## Limits
 
 - A scan renders each page in a browser and runs axe-core on it, then scores it (100 minus weighted issues). With `TINYFISH_API_KEY` set, public URLs are rendered in a **TinyFish remote browser** (Browser API over CDP); `localhost` and private addresses use local Chromium because TinyFish cannot reach them. `SCAN_ENGINE` (`auto` default, `tinyfish`, `local`) overrides this, and the scan's `engine` field says which one ran. If TinyFish can't start a browser, or a site answers it with a bot-protection page (for example Cloudflare's "Just a moment…"), `auto` retries with local Chromium; a forced `tinyfish` scan fails instead. A blocked page is never scored. TinyFish sessions cost $0.002 per minute and are always ended when the scan finishes. The scan does **not** yet run the LLM fixer or re-verify, so scans end with issues awaiting human review. axe-core cannot see everything: for example a `div` with `onclick` or a placeholder-only input is not flagged, which is what the planned LLM checks are for.
-- `scope: site` follows up to `MAX_SITE_PAGES` same-origin links from the first page.
+- `scope: site` crawls the site breadth-first: it follows same-origin links on every page it scans, up to `MAX_SITE_PAGES` pages (default 20). A page that fails to load is skipped; pages beyond the limit are reported in the scan log.
 - `ALLOW_PRIVATE_TARGETS=true` lets scans hit localhost and private addresses. Turn it off when deployed.
 - One connection for the whole server: there is no user login yet.
 - The repo toggle is stored, but nothing opens PRs yet. That arrives with `POST /scans/{id}/ship`.

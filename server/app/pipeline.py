@@ -233,18 +233,21 @@ async def render(page: Page, url: str) -> None:
     await ensure_not_blocked(page, url)
 
 
-async def same_origin_links(page: Page, base: str, limit: int) -> list[str]:
+def url_key(u: str) -> tuple[str, str, str]:
+    """Identity of a page for the crawl: /about and /about/ are the same page."""
+    p = urlsplit(u)
+    return p.netloc.lower(), p.path.rstrip("/") or "/", p.query
+
+
+async def same_origin_links(page: Page, origins: set[str]) -> list[str]:
+    """Every distinct page link on the rendered page that stays on the site (fragments dropped, files skipped)."""
     hrefs = await page.eval_on_selector_all("a[href]", "els => els.map(e => e.getAttribute('href'))")
-    origin = urlsplit(base)
     out: list[str] = []
     for h in hrefs:
-        u = urldefrag(urljoin(base, h or ""))[0]
+        u = urldefrag(urljoin(page.url, h or ""))[0]
         p = urlsplit(u)
-        if p.scheme in ("http", "https") and p.netloc == origin.netloc and not SKIP_EXT.search(p.path):
-            if u != base and u not in out:
-                out.append(u)
-        if len(out) >= limit:
-            break
+        if p.scheme in ("http", "https") and p.netloc.lower() in origins and not SKIP_EXT.search(p.path) and u not in out:
+            out.append(u)
     return out
 
 
@@ -258,16 +261,43 @@ async def crawl(
     async with async_playwright() as pw, open_page(pw, db, scan, s) as page:
         emit(db, scan_id, "crawling", f"rendering {scan.url} in the {'TinyFish' if scan.engine == 'tinyfish' else 'local'} browser")
         await render(page, scan.url)
-        urls = [scan.url]
-        if scan.scope == "site":
-            urls += await same_origin_links(page, scan.url, s.max_site_pages - 1)
-            emit(db, scan_id, "crawling", f"found {len(urls)} page(s) to scan")
+        origins = {urlsplit(scan.url).netloc.lower(), urlsplit(page.url).netloc.lower()}
+        queue, queued, overflow, visited = [scan.url], {url_key(scan.url)}, set(), []
 
         set_status(db, scan, "diagnosing")
-        for n, url in enumerate(urls):
+        n = 0
+        while n < len(queue):
+            url = queue[n]
             if n:
                 emit(db, scan_id, "diagnosing", f"rendering {url}")
-                await render(page, url)
+                try:
+                    await render(page, url)
+                except Exception as e:  # one broken page must not sink the whole crawl
+                    reason = str(e).splitlines()[0][:120] if str(e) else type(e).__name__
+                    emit(db, scan_id, "diagnosing", f"couldn't scan {url} ({reason}); skipped")
+                    queue.pop(n)
+                    try:  # a failed navigation leaves Chromium on its error page, which interrupts the next one: use a fresh tab
+                        broken, page = page, await page.context.new_page()
+                        await broken.close()
+                    except Exception:
+                        pass
+                    continue
+            if scan.scope == "site":
+                added = 0
+                for link in await same_origin_links(page, origins):
+                    key = url_key(link)
+                    if key in queued or key in overflow:
+                        continue
+                    if len(queued) < s.max_site_pages:
+                        queued.add(key)
+                        queue.append(link)
+                        added += 1
+                    else:
+                        overflow.add(key)
+                if added:
+                    emit(db, scan_id, "diagnosing", f"found {added} new page(s) on {urlsplit(url).path or '/'}: {len(queued)} to scan (limit {s.max_site_pages})")
+            n += 1
+            visited.append(url)
             emit(db, scan_id, "diagnosing", f"axe-core: WCAG {scan.level} on {urlsplit(url).path or '/'}")
             result = await run_axe(page, scan.level)
             axe_found: list[tuple[str, str]] = []
@@ -297,10 +327,12 @@ async def crawl(
                     )
             if client:
                 await llm_review(db, scan, s, counts, seen, rules, rules_text, page, url, axe_found, client)
-            elif n == 0:
+            elif n == 1:
                 emit(db, scan_id, "diagnosing", "OpenAI review skipped: set OPENAI_API_KEY to add it (axe-core results only)")
+        if overflow:
+            emit(db, scan_id, "diagnosing", f"page limit reached: {len(overflow)} more page(s) were found but not scanned (raise MAX_SITE_PAGES)")
         if client:
-            await fix_site(db, scan, s, rules_text, page, urls, client)
+            await fix_site(db, scan, s, rules_text, page, visited, client)
 
 
 def fix_dict(f: FixRow) -> dict:

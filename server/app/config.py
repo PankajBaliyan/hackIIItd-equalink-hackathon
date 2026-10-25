@@ -15,7 +15,7 @@ class Settings(BaseSettings):
 
     # Scans fetch URLs the user supplies. Allow localhost/private targets for local dev; set false when deployed.
     allow_private_targets: bool = True
-    max_site_pages: int = 5
+    max_site_pages: int = 20
 
     # Where scans render pages: "auto" uses a TinyFish remote browser for public URLs when TINYFISH_API_KEY is set
     # and local Chromium otherwise (TinyFish can't reach localhost); "tinyfish" and "local" force one.
