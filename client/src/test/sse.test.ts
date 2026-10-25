@@ -16,7 +16,10 @@ class FakeEventSource {
     this.closed = true;
   }
   send(id: number, e: Partial<ScanEvent>) {
-    this.onmessage?.({ data: JSON.stringify({ type: "info", ts: "", ...e }), lastEventId: String(id) });
+    this.onmessage?.({
+      data: JSON.stringify({ type: "info", ts: "", ...e }),
+      lastEventId: String(id),
+    });
   }
 }
 

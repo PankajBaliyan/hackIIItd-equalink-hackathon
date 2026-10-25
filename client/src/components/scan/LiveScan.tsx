@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 
 import { AnnotatedScreenshot } from "@/components/scan/AnnotatedScreenshot";
 import { ScoreRing } from "@/components/scan/ScoreRing";
+import { completionSummary } from "@/components/scan/summary";
 import { TerminalFeed } from "@/components/scan/TerminalFeed";
 import { FocusHeading } from "@/components/shell/PagePlaceholder";
 import { AnimatedCounter } from "@/components/ui/animated-counter";
@@ -54,6 +55,7 @@ export function LiveScan({ id }: { id: string }) {
   const failed = scan?.status === "failed";
   const done = scan?.status === "done";
   const running = !!scan && !done && !failed;
+  const summary = useMemo(() => completionSummary(s.issues, s.fixes), [s.issues, s.fixes]);
   const counters = useMemo(() => countBySeverity(s.issues), [s.issues]);
   const elapsed = useElapsed(scan?.created_at, running, s.events[s.events.length - 1]?.ts);
 
@@ -163,14 +165,14 @@ export function LiveScan({ id }: { id: string }) {
 
       {done && (
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-card border border-success bg-surface p-4">
-          <p className="font-medium">
-            Scan complete. {s.issues.length} issues found and fixes are ready to review.
-          </p>
-          <Button variant="primary" asChild>
-            <Link to="/scans/$id/fixes" params={{ id }}>
-              Review fixes <ArrowRight />
-            </Link>
-          </Button>
+          <p className="font-medium">{summary.text}</p>
+          {summary.action && (
+            <Button variant="primary" asChild>
+              <Link to="/scans/$id/fixes" params={{ id }}>
+                {summary.action === "fixes" ? "Review fixes" : "Review issues"} <ArrowRight />
+              </Link>
+            </Button>
+          )}
         </div>
       )}
 

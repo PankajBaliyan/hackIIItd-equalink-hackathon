@@ -51,7 +51,9 @@ describe("opening a scan that already failed", () => {
         <LiveScan id="scan_1" />
       </ScanStoreProvider>,
     );
-    expect(await screen.findByText(/showed a bot-protection page\s*Check the log/)).toBeInTheDocument();
+    expect(
+      await screen.findByText(/showed a bot-protection page\s*Check the log/),
+    ).toBeInTheDocument();
     expect(screen.getByText("rendering https://x.dev")).toBeInTheDocument();
     expect(screen.queryByText("Waiting for the agent…")).not.toBeInTheDocument();
     expect(screen.getByText("1:05")).toBeInTheDocument(); // first event to last event
