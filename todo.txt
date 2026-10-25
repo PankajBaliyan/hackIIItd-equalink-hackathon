@@ -79,6 +79,11 @@ Done:
   judged hidden elements. render() now scrolls down the page and back before axe and the screenshot
   (server/app/pipeline.py: reveal_lazy_content; capped at 30 steps, so endless-scroll pages stop).
   Not covered: sections that hide again when scrolled out of view, and sites that need a click to show content.
+- Scrolling the screenshot no longer drags the whole page. The screenshot box (and the agent log) now use
+  overscroll-behavior: contain, so wheeling past either end of the screenshot stays inside it; before, wheeling up
+  past its top sent the whole UI to the top. The agent log's hidden screen-reader labels were also escaping the log
+  and adding 24px of blank scroll area per log line under the page; the log is now their containing block.
+  (client/src/components/scan/AnnotatedScreenshot.tsx, TerminalFeed.tsx)
 
 
 ===================================================================================
@@ -118,3 +123,10 @@ Module === Settings
 ===================================================================================
 ===================================================================================
 Module === Docs
+
+
+Github - 100% Done
+Presentation - 
+Video Recording -
+Project Host -
+Project Submission - 

@@ -91,7 +91,7 @@ export function TerminalFeed({
           aria-label="Scan event log"
           tabIndex={0}
           onScroll={onScroll}
-          className="h-72 overflow-auto rounded-card border bg-bg p-3 font-mono text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="relative h-72 overflow-auto overscroll-contain rounded-card border bg-bg p-3 font-mono text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
           {events.length === 0 && (
             <p className="text-muted">

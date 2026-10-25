@@ -91,7 +91,7 @@ export function AnnotatedScreenshot({
         tabIndex={0}
         role="region"
         aria-label={`Screenshot of ${pathOf(shot.page_url)}, scrollable`}
-        className="max-h-[32rem] overflow-auto rounded-card border focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        className="max-h-[32rem] overflow-auto overscroll-contain rounded-card border focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
       >
         <figure className="relative m-0">
           <img

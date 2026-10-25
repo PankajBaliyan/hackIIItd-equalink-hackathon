@@ -54,6 +54,15 @@ describe("AnnotatedScreenshot", () => {
     expect(screen.getByRole("region", { name: /Screenshot of \/about/ })).toBeInTheDocument();
   });
 
+  it("keeps wheel scrolling inside the screenshot instead of dragging the whole page along", () => {
+    render(<AnnotatedScreenshot scanId="s1" shots={shots.slice(0, 1)} issues={[]} />);
+    // Without overscroll containment, scrolling past either end of the box scrolls the page (even to its top).
+    expect(screen.getByRole("region", { name: /Screenshot of/ })).toHaveClass(
+      "overflow-auto",
+      "overscroll-contain",
+    );
+  });
+
   it("has no page picker for a single page", () => {
     render(<AnnotatedScreenshot scanId="s1" shots={shots.slice(0, 1)} issues={[]} />);
     expect(screen.queryByLabelText("Page")).not.toBeInTheDocument();
