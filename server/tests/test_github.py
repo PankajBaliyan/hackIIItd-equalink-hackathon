@@ -15,7 +15,7 @@ def make_settings(**kw) -> Settings:
 
 @pytest.fixture
 def client(monkeypatch, tmp_path):
-    cfg = {"settings": make_settings(github_token="ghp_test")}
+    cfg = {"settings": make_settings(github_client_id="cid", github_client_secret="sec")}
     monkeypatch.setattr(db, "_engine", None)
     monkeypatch.setattr(cfg["settings"], "database_url", f"sqlite:///{tmp_path}/t.db")
     app.dependency_overrides[get_settings] = lambda: cfg["settings"]
@@ -37,13 +37,23 @@ def client(monkeypatch, tmp_path):
     SQLModel.metadata.clear  # tables are per-file db, nothing to reset
 
 
+def connect_user(client, monkeypatch):
+    async def fake_exchange(s, code):
+        return "gho_test"
+
+    monkeypatch.setattr(github, "exchange_code", fake_exchange)
+    state = client.post("/integrations/github/connect").json()["install_url"].split("state=")[1]
+    client.get("/integrations/github/oauth/callback", params={"code": "abc", "state": state})
+
+
 def test_starts_disconnected(client):
     r = client.get("/integrations/github").json()
-    assert r["connected"] is False and r["mode"] == "pat"
+    assert r["connected"] is False and r["mode"] == "oauth"
 
 
-def test_connect_lists_repos_sorted_and_toggle_persists(client):
-    r = client.post("/integrations/github/connect").json()
+def test_connect_lists_repos_sorted_and_toggle_persists(client, monkeypatch):
+    connect_user(client, monkeypatch)
+    r = client.get("/integrations/github").json()
     assert r["connected"] and r["account"] == "octocat"
     assert [x["full_name"] for x in r["repos"]] == ["octocat/Alpha", "octocat/zeta"]
     assert not any(x["enabled"] for x in r["repos"])
@@ -54,8 +64,8 @@ def test_connect_lists_repos_sorted_and_toggle_persists(client):
     assert {x["full_name"]: x["enabled"] for x in again["repos"]}["octocat/zeta"] is True
 
 
-def test_cannot_enable_unknown_repo(client):
-    client.post("/integrations/github/connect")
+def test_cannot_enable_unknown_repo(client, monkeypatch):
+    connect_user(client, monkeypatch)
     r = client.patch("/integrations/github/repos", json={"full_name": "evil/repo", "enabled": True})
     assert r.status_code == 404
 
@@ -65,8 +75,8 @@ def test_patch_requires_connection(client):
     assert r.status_code == 409
 
 
-def test_disconnect_clears(client):
-    client.post("/integrations/github/connect")
+def test_disconnect_clears(client, monkeypatch):
+    connect_user(client, monkeypatch)
     client.patch("/integrations/github/repos", json={"full_name": "octocat/zeta", "enabled": True})
     assert client.delete("/integrations/github").json()["connected"] is False
     assert client.get("/integrations/github").json()["connected"] is False

@@ -38,7 +38,6 @@ class Settings(BaseSettings):
 
     github_client_id: str = ""
     github_client_secret: str = ""
-    github_token: str = ""
     github_app_id: str = ""
     github_app_slug: str = ""
     github_app_private_key: str = ""
@@ -68,12 +67,12 @@ class Settings(BaseSettings):
 
     @property
     def github_mode(self) -> str:
-        """'app' (production), 'oauth' ("Sign in with GitHub"), 'pat' (dev token), or 'none'."""
+        """'app' (production), 'oauth' ("Sign in with GitHub"), or 'none'."""
         if self.app_configured:
             return "app"
         if self.oauth_configured:
             return "oauth"
-        return "pat" if self.github_token else "none"
+        return "none"
 
 
 @lru_cache

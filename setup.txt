@@ -37,10 +37,8 @@ uv pip install --python .venv/bin/python -r requirements-dev.txt
 #     Authorization callback URL: http://localhost:8000/integrations/github/oauth/callback
 #   GITHUB_CLIENT_ID=<client id>
 #   GITHUB_CLIENT_SECRET=<client secret>
-#
-# Or, no browser login:
-#   GITHUB_TOKEN=<your token>          (quickest for dev)
-#   or the GITHUB_APP_* variables      (GitHub App, see server/README.md)
+# Or, production GitHub App:
+#   use the GITHUB_APP_* variables      (GitHub App, see server/README.md)
 # Without either, "Connect GitHub" returns "GitHub isn't configured on the server".
 
 

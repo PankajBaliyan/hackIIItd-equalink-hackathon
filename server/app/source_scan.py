@@ -25,7 +25,7 @@ class SourceError(Exception):
 
 
 async def _token(db: Session, s: Settings) -> str | None:
-    """The connected account's token, else GITHUB_TOKEN, else None (public repos still work)."""
+    """The connected account's token, else None (public repos still work)."""
     from app import routes_github
 
     conn = db.get(GithubConnection, 1)
@@ -34,7 +34,7 @@ async def _token(db: Session, s: Settings) -> str | None:
             return (await routes_github._token(s, conn))[0]
         except HTTPException:
             pass
-    return s.github_token or None
+    return None
 
 
 def pick_files(blobs: list[dict], s: Settings) -> tuple[list[str], int]:

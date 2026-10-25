@@ -53,9 +53,7 @@ async def _token(s: Settings, conn: GithubConnection) -> tuple[str, bool]:
         if not conn.access_token:
             raise HTTPException(409, "No GitHub token stored. Connect again.")
         return conn.access_token, False
-    if not s.github_token:
-        raise HTTPException(409, "GITHUB_TOKEN is no longer set on the server.")
-    return s.github_token, False
+    raise HTTPException(409, "Invalid GitHub connection mode.")
 
 
 async def _status(s: Settings, db: Session, conn: GithubConnection) -> GithubStatus:
@@ -114,9 +112,9 @@ async def status(s: SettingsDep, db: SessionDep):
 async def connect(s: SettingsDep, db: SessionDep):
     if s.github_mode == "none":
         raise HTTPException(
-            400, "GitHub isn't configured on the server. Set GITHUB_TOKEN, or the GITHUB_APP_* variables, in server/.env."
+            400, "GitHub isn't configured on the server. Set GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET, or the GITHUB_APP_* variables, in server/.env."
         )
-    if s.github_mode in ("app", "oauth") and not s.state_secret:
+    if not s.state_secret:
         raise HTTPException(500, "STATE_SECRET is not set in server/.env.")
     try:
         if s.github_mode == "oauth":
@@ -124,8 +122,7 @@ async def connect(s: SettingsDep, db: SessionDep):
         if s.github_mode == "app":
             url = f"https://github.com/apps/{s.github_app_slug}/installations/new?state={_sign_state(s)}"
             return _disconnected(s, install_url=url)
-        conn = _save(db, "pat", await github.pat_user(s.github_token))
-        return await _status(s, db, conn)
+        raise HTTPException(400, "GitHub isn't configured on the server.")
     except github.GitHubError as e:
         raise HTTPException(502, e.message)
 

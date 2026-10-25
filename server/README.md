@@ -20,11 +20,9 @@ In `client/.env` keep `VITE_API_BASE_URL=http://localhost:8000` and `VITE_GITHUB
 
 **OAuth, "Sign in with GitHub" (recommended for dev).** At github.com/settings/developers create a **New OAuth App** with Homepage URL `http://localhost:5173` and Authorization callback URL `http://localhost:8000/integrations/github/oauth/callback`. Put its Client ID and a generated Client secret in `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET`, then restart the server. The dashboard button becomes **Sign in with GitHub** and sends you to github.com. The user token (scope `repo`) is stored server-side in SQLite.
 
-**Personal access token (no browser login).** Set `GITHUB_TOKEN` (classic: `repo` scope; fine-grained: Contents and Pull requests read/write). Click **Connect GitHub** in the dashboard and your repos appear.
-
 **GitHub App (production).** Create an app at github.com/settings/apps with Contents (RW), Pull requests (RW) and Metadata (R). Set its **Setup URL** to `http://localhost:8000/integrations/github/callback`, then fill `GITHUB_APP_ID`, `GITHUB_APP_SLUG`, `GITHUB_APP_PRIVATE_KEY` (or `_PATH`) and `STATE_SECRET`. Connect sends you to github.com to install the app, then back to the dashboard.
 
-Priority if several are set: App, then OAuth, then token. Secrets live only in `.env`, which is git-ignored.
+Priority if both are set: App, then OAuth. Secrets live only in `.env`, which is git-ignored.
 
 ## Endpoints
 
@@ -71,7 +69,7 @@ Priority if several are set: App, then OAuth, then token. Secrets live only in `
 
 `POST /scans` with `{"target": "repo", "repo": "owner/repo"}` scans the repository's code instead of a rendered page (the **GitHub repo** option on New Scan).
 
-- It reads the repo with the connected GitHub account (or `GITHUB_TOKEN`; public repos work without either) and checks `.html`, `.jsx`, `.tsx`, `.vue`, `.svelte` and `.astro` files. `node_modules`, build output, tests and stories are skipped, up to `SOURCE_MAX_FILES` files, app folders (`src`, `app`, `pages`, `components`, ...) first.
+- It reads the repo with the connected GitHub account (public repos work without one) and checks `.html`, `.jsx`, `.tsx`, `.vue`, `.svelte` and `.astro` files. `node_modules`, build output, tests and stories are skipped, up to `SOURCE_MAX_FILES` files, app folders (`src`, `app`, `pages`, `components`, ...) first.
 - **Static checks** (always on, in `app/source_rules.py`): missing `alt`, unlabeled inputs, empty buttons and links, click handlers on non-interactive elements, missing `lang`, frames without a title, videos without captions, positive `tabindex`, and viewports that block zoom. They only fire when the markup alone proves the problem; a `{...props}` spread skips the tag.
 - **OpenAI review** (optional, needs `OPENAI_API_KEY`): the first `SOURCE_LLM_MAX_FILES` files go to the model with your saved W3C rules as reference, to find what static rules can't (heading order, focus management, ARIA misuse, error text, contrast of hard-coded colors). Each reported issue is checked against the files that were sent, and a failure or refusal never fails the scan.
 - Every issue has `source_file`, `source_line` and a `detector` (`static` or `claude`), and links to that line on GitHub. Saved W3C rules are attached by success criterion as in rendered scans.
