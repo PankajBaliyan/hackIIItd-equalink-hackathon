@@ -134,28 +134,28 @@ Done:
 ===================================================================================
 Module === Pull Requests
 
-Working and dynamic: nothing end to end. The page lists PRs from in-memory state only.
+Working and dynamic: the page lists real pull requests from GitHub (open / closed tabs, per-repo filter, GET
+/integrations/github/pulls, survives reload), branch list + compare, and a manual "Open a pull request" form
+(POST /integrations/github/pulls; EquaLink never merges). Fixes from a github.com repo scan can be shipped as a PR
+(server/fixes/main.py: ship, via the fixes service).
 
-1. [High] Nothing creates a pull request.
-   POST /scans/{id}/ship is a hardcoded 501 and server/app/github.py has no branch / commit / PR functions (the OAuth
-   scope "repo" is already requested, so the token could do it). (server/app/routes_scans.py, github.py)
+1. [High] Live scans still cannot open a PR.
+   POST /scans/{id}/ship for a scan created by the live pipeline (website or source scan) still returns 501
+   "This live scan has no generated fixes to ship yet" (server/app/routes_scans.py: ship). Only scans imported by the
+   fixes service (github.com URL scan) ship. auto_ship is still sent by the form but nothing reads it.
 
-2. [High] The PR list is lost on reload.
-   It reads scanStore.pullRequests (browser memory). There is no PR table or list endpoint, and GET /scans/{id}
-   never returns `pr`. (client/src/state/scanStore.tsx, client/src/routes/pull-requests.tsx)
-
-3. [Med] PR cards show hardcoded labels and no real status.
-   The "accessibility" and "automated" chips are fixed text, not GitHub labels. Open / merged / closed state, checks
-   and review status are never fetched, and there is no webhook route (.env.example lists GITHUB_WEBHOOK_SECRET but no code reads it).
+2. [Med] PR cards still show hardcoded "accessibility" and "automated" chips (not GitHub labels). Checks and review
+   status are never fetched, and there is no webhook route (GITHUB_WEBHOOK_SECRET is read by no code).
    (client/src/components/fixes/PRCard.tsx)
 
-4. [Med] "May open PRs on this repo" is never enforced.
-   RepoSetting.enabled is stored by the GitHub page but nothing checks it before writing to a repo.
-
-5. [Low] Undefined: branch name, commit message and PR description (should include score before/after, the rules
-   fixed, screenshots).
+3. [Low] Branch name is a11y-fix-<scan id> and the PR description lists rule + file only; no score before/after or
+   screenshots in the description. (server/fixes/main.py: ship)
 
 Done:
+- The PR list is no longer lost on reload: it is read from GitHub, not browser memory.
+- Open / closed / merged state is shown from GitHub.
+- "May open PRs on this repo" is enforced: listing, branches, compare, create PR and ship all require the repo to be
+  switched on in the GitHub integration (routes_github.py: _repo_token, fixes/main.py: shipping_token).
 
 ===================================================================================
 ===================================================================================
@@ -242,7 +242,7 @@ connection status, revoked-token detection. Optional hardening only:
    global connection for the whole server (no per-user accounts, see Cross-cutting 1).
 
 2. [Low] OAuth scope "repo" gives full read/write to every private repo; a GitHub App would be least-privilege.
-   The per-repo "enabled" flag is not enforced (see Pull Requests 4).
+   (The per-repo "enabled" flag is now enforced before writing to a repo; see Pull Requests, Done.)
 
 3. [Low] The Settings page still says GitHub is "not connected / arrives with the backend" (see Settings 1).
 
