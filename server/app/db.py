@@ -36,6 +36,7 @@ def init_db() -> None:
         ("detector", "VARCHAR NOT NULL DEFAULT 'axe'"),
         ("source_file", "VARCHAR"),
         ("source_line", "INTEGER"),
+        ("box", "VARCHAR"),
     ):
         if name not in issue_cols:
             with engine().begin() as conn:

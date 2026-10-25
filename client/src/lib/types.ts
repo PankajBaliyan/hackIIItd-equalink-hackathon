@@ -34,7 +34,17 @@ export interface Issue {
   /** The saved W3C rule that covers this issue's success criterion, if one is stored. */
   /** What found it: axe on a rendered page, static rules on source, or the LLM review of source. */
   detector?: "axe" | "static" | "llm";
+  /** Where the element sits on its page's screenshot, in percent of the image. */
+  box?: { x: number; y: number; w: number; h: number } | null;
   rule?: { id: number; title: string; source_url: string | null; excerpt: string } | null;
+}
+
+/** A stored screenshot of one scanned page; the image is served at /scans/:id/shots/:shotId. */
+export interface Shot {
+  id: number;
+  page_url: string;
+  width: number;
+  height: number;
 }
 
 export interface Fix {
@@ -65,7 +75,7 @@ export interface ScanEvent {
   message: string;
   counters?: Record<Severity, number>;
   issue?: Issue;
-  type: "info" | "issue" | "fix" | "validated" | "rejected";
+  type: "info" | "issue" | "fix" | "validated" | "rejected" | "shot";
   ts: string;
 }
 
@@ -86,6 +96,8 @@ export interface ScanDetail {
   scan: Scan;
   issues: Issue[];
   fixes: Fix[];
+  /** Page screenshots; absent from mock scans. */
+  shots?: Shot[];
   pr?: PullRequest;
 }
 

@@ -42,21 +42,17 @@ Module === Live Scan
 Working and dynamic: header chips (incl. engine used), stepper/status, live SSE agent log with reconnect +
 polling fallback, severity counters, elapsed timer, pages list, sidebar link to the latest scan.
 
-1. The screenshot panel is a placeholder.
-   AnnotatedScreenshot is never given an image or boxes and the backend captures no screenshots.
-   (client/src/components/scan/AnnotatedScreenshot.tsx, server/app/pipeline.py)
-
-2. The score ring only shows score_before.
+1. The score ring only shows score_before.
    The server computes the score at the end of the scan, so the ring stays "-" until then. score_after is
    not shown on this page. (client/src/components/scan/LiveScan.tsx, server/app/pipeline.py: run_scan)
 
-3. "Pipeline progress" is a stage estimate, not real progress.
+2. "Pipeline progress" is a stage estimate, not real progress.
    Stage index / 6, capped at 95%. No "page 3 of 12" detail, and "N pages with issues" does not say how many
    pages were scanned. (client/src/components/scan/LiveScan.tsx)
 
-4. The "Shipping" step in the stepper is never reached (PRs are not built, see Scan Now item 1).
+3. The "Shipping" step in the stepper is never reached (PRs are not built, see Scan Now item 1).
 
-5. Minor: with zero scans the sidebar Live Scan / Fixes links fall back to the hardcoded id "demo" and open
+4. Minor: with zero scans the sidebar Live Scan / Fixes links fall back to the hardcoded id "demo" and open
    "Couldn't load this scan". (client/src/lib/nav.ts: DEMO_SCAN_ID, client/src/components/shell/AppShell.tsx)
 
 Done:
@@ -72,6 +68,17 @@ Done:
   found, no automatic fixes were proposed" with a "Review issues" button when there are none; otherwise
   "N issues found: X validated fixes ready to review, Y rejected by the rules engine, Z need human review" with
   "Review fixes". (client/src/components/scan/summary.ts, LiveScan.tsx)
+- The screenshot panel shows the real page. Each scanned page is captured (JPEG, stored in the DB table `shot`,
+  height capped by SCREENSHOT_MAX_HEIGHT=4000) and every finding that can be located gets a box (percent of the
+  image, stored on the issue), drawn in its severity colour. Full-site scans get a page picker. GET
+  /scans/{id}/shots/{shot_id} serves the image; a "shot" log event makes the page show it while the scan runs.
+  Source scans say there is no page to show. (server/app/screenshots.py, client/src/components/scan/AnnotatedScreenshot.tsx)
+  Not covered: boxes for elements inside iframes / shadow DOM or hidden elements, very long pages are cut at
+  4000px, and no click-a-box-to-open-the-issue yet.
+- Pages that reveal content on scroll (opacity-0 sections, lazy images) were half blank in the screenshot and axe
+  judged hidden elements. render() now scrolls down the page and back before axe and the screenshot
+  (server/app/pipeline.py: reveal_lazy_content; capped at 30 steps, so endless-scroll pages stop).
+  Not covered: sections that hide again when scrolled out of view, and sites that need a click to show content.
 
 
 ===================================================================================

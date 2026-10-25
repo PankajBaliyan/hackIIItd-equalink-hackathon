@@ -23,7 +23,7 @@ from playwright.async_api import Error as PlaywrightError
 from playwright.async_api import Browser, Page, Playwright, async_playwright
 from sqlmodel import Session, select
 
-from app import fixer, page_llm, rule_lookup, source_llm, tinyfish_browser
+from app import fixer, page_llm, rule_lookup, screenshots, source_llm, tinyfish_browser
 from app.config import Settings, get_settings
 from app.db import engine
 from app.models import EventRow, FixRow, IssueRow, RuleDoc, Scan
@@ -102,6 +102,7 @@ def issue_dict(i: IssueRow, doc: RuleDoc | None = None) -> dict:
         "id": i.id, "scan_id": i.scan_id, "page_url": i.page_url, "rule_id": i.rule_id, "wcag_sc": i.wcag_sc,
         "impact": i.impact, "selector": i.selector, "html": i.html, "context": i.context,
         "rule": rule_lookup.rule_ref(doc), "detector": i.detector, "source_file": i.source_file, "source_line": i.source_line,
+        "box": dict(zip("xywh", map(float, i.box.split(",")))) if i.box else None,
     }
 
 
@@ -223,14 +224,76 @@ async def ensure_not_blocked(page: Page, url: str) -> None:
         raise BlockedError(f"{urlsplit(url).netloc} showed a bot-protection page ({title!r}) instead of its content")
 
 
-async def render(page: Page, url: str) -> None:
-    await page.goto(url, wait_until="load", timeout=30_000)
+class LoadError(Exception):
+    """The page could not be opened at all (timeout, DNS, refused connection), so there is nothing to scan."""
+
+
+NAV_TIMEOUT = 45_000  # ms to get the page's HTML; heavy sites behind a remote browser are slow to answer
+LOAD_WAIT = 15_000  # ms the rest of the page (scripts, images) gets to finish loading, best effort
+IDLE_WAIT = 5_000
+
+
+def load_reason(url: str, e: Exception) -> str:
+    """A reason a person can act on instead of Playwright's call log."""
+    host = urlsplit(url).netloc
+    msg = str(e)
+    if "Timeout" in msg:
+        return f"{host} didn't respond within {NAV_TIMEOUT // 1000}s"
+    if "ERR_NAME_NOT_RESOLVED" in msg:
+        return f"couldn't find {host}"
+    if "ERR_CONNECTION_REFUSED" in msg:
+        return f"{host} refused the connection"
+    return msg.splitlines()[0][:160] if msg else type(e).__name__
+
+
+REVEAL_MAX_STEPS = 30  # scroll steps at most; keeps endless-scroll pages from running forever
+REVEAL_STEP_WAIT = 0.2  # seconds per step for scroll observers to fire and reveal animations to start
+REVEAL_SETTLE = 0.7  # seconds at the end for the last animations and images to finish
+
+# Runs in the page: how far it can scroll right now (grows as lazy content loads) and the viewport height.
+SCROLL_INFO_JS = "() => [Math.max(document.documentElement.scrollHeight, document.body ? document.body.scrollHeight : 0), window.innerHeight]"
+
+
+async def reveal_lazy_content(page: Page) -> None:
+    """Scroll down the page and back so content that appears on scroll is really there before axe and the screenshot.
+
+    Many sites keep sections at opacity 0 (or unloaded) until an observer sees them enter the viewport. Without this
+    a long page is half empty in the screenshot and axe judges elements nobody can see. Never fails the scan.
+    """
     try:
-        await page.wait_for_load_state("networkidle", timeout=5_000)
-    except Exception:
-        pass  # chatty pages never go idle; the load event is enough
+        y = 0
+        for _ in range(REVEAL_MAX_STEPS):
+            height, view = await page.evaluate(SCROLL_INFO_JS)
+            if y >= height - view:
+                break
+            y += max(200, int(view * 0.8))
+            await page.evaluate("y => window.scrollTo({top: y, behavior: 'instant'})", y)
+            await asyncio.sleep(REVEAL_STEP_WAIT)
+        try:
+            await page.wait_for_load_state("networkidle", timeout=2_000)  # images that just started loading
+        except Exception:
+            pass
+        await page.evaluate("() => window.scrollTo({top: 0, behavior: 'instant'})")
+        await asyncio.sleep(REVEAL_SETTLE)
+    except PlaywrightError:
+        pass  # the page navigated away mid-scroll; scan what is there
+
+
+async def render(page: Page, url: str) -> None:
+    # Wait only for the document, not the `load` event: pages like large shops keep loading trackers and images
+    # for a long time, which used to time the whole scan out although axe could already run.
+    try:
+        await page.goto(url, wait_until="domcontentloaded", timeout=NAV_TIMEOUT)
+    except PlaywrightError as e:
+        raise LoadError(f"Couldn't load {url}: {load_reason(url, e)}") from e
+    for state, wait in (("load", LOAD_WAIT), ("networkidle", IDLE_WAIT)):
+        try:
+            await page.wait_for_load_state(state, timeout=wait)
+        except Exception:
+            pass  # chatty pages never finish; what has loaded by now is what gets scanned
     await settle(page)
     await ensure_not_blocked(page, url)
+    await reveal_lazy_content(page)
 
 
 def url_key(u: str) -> tuple[str, str, str]:
@@ -327,12 +390,23 @@ async def crawl(
                     )
             if client:
                 await llm_review(db, scan, s, counts, seen, rules, rules_text, page, url, axe_found, client)
-            elif n == 1:
+            await take_screenshot(db, scan_id, s, page, url)
+            if not client and n == 1:
                 emit(db, scan_id, "diagnosing", "OpenAI review skipped: set OPENAI_API_KEY to add it (axe-core results only)")
         if overflow:
             emit(db, scan_id, "diagnosing", f"page limit reached: {len(overflow)} more page(s) were found but not scanned (raise MAX_SITE_PAGES)")
         if client:
             await fix_site(db, scan, s, rules_text, page, visited, client)
+
+
+async def take_screenshot(db: Session, scan_id: str, s: Settings, page: Page, url: str) -> None:
+    """Store a screenshot of the page with its findings located on it. Never fails the scan."""
+    try:
+        shot = await screenshots.capture(db, scan_id, page, url, s.screenshot_max_height)
+        emit(db, scan_id, "diagnosing", f"screenshot of {urlsplit(url).path or '/'} ({shot.width}x{shot.height})", "shot")
+    except Exception as e:
+        reason = str(e).splitlines()[0][:100] if str(e) else type(e).__name__
+        emit(db, scan_id, "diagnosing", f"couldn't take a screenshot of {url} ({reason})")
 
 
 def fix_dict(f: FixRow) -> dict:
@@ -477,10 +551,11 @@ async def run_scan(scan_id: str) -> None:
                     try:
                         await crawl(db, scan, s, counts, seen, rules)
                         break
-                    except BlockedError as e:
+                    except (BlockedError, LoadError) as e:
                         if attempt or scan.engine != "tinyfish" or s.scan_engine != "auto":
                             raise
-                        emit(db, scan_id, "crawling", f"TinyFish browser was blocked ({e}); retrying with local Chromium")
+                        what = "was blocked" if isinstance(e, BlockedError) else "couldn't load the page"
+                        emit(db, scan_id, "crawling", f"TinyFish browser {what} ({e}); retrying with local Chromium")
                         scan.engine = "local"
                         db.add(scan)
                         db.commit()

@@ -541,3 +541,175 @@ def test_single_page_scope_does_not_crawl(env, multi_site):
     sid = new_scan(multi_site, "local")
     asyncio.run(pipeline.run_scan(sid))
     assert scanned_paths() == ["/"]
+
+
+# --- page screenshots with located findings -----------------------------------------------------------------
+
+
+def test_scan_stores_a_jpeg_per_page_and_locates_findings_on_it(env, site):
+    from fastapi.testclient import TestClient
+
+    from app import routes_scans
+    from app.main import app
+
+    sid = new_scan(site, "local")
+    asyncio.run(pipeline.run_scan(sid))
+    with Session(db.engine()) as s:
+        detail = routes_scans.get_scan(sid, s)
+    (shot,) = detail["shots"]
+    assert shot["page_url"] == site and shot["width"] > 0 and 0 < shot["height"] <= 4000
+    img = next(i for i in detail["issues"] if i["rule_id"] == "image-alt")
+    assert img["box"] and 0 <= img["box"]["x"] < 100 and 0 <= img["box"]["y"] < 100 and img["box"]["w"] > 0
+    _, _, messages = result()
+    assert any(m.startswith("screenshot of /") for m in messages)
+
+    app.dependency_overrides[routes_scans.get_session] = lambda: Session(db.engine())
+    try:
+        with TestClient(app) as c:
+            r = c.get(f"/scans/{sid}/shots/{shot['id']}")
+            assert r.status_code == 200 and r.headers["content-type"] == "image/jpeg" and r.content[:3] == b"\xff\xd8\xff"
+            assert c.get(f"/scans/other/shots/{shot['id']}").status_code == 404  # only through its own scan
+            assert c.get(f"/scans/{sid}/shots/9999").status_code == 404
+    finally:
+        app.dependency_overrides.pop(routes_scans.get_session, None)
+
+
+def test_site_scan_has_one_screenshot_per_scanned_page(env, multi_site):
+    from app import routes_scans
+
+    asyncio.run(pipeline.run_scan(site_scan(url=multi_site)))
+    with Session(db.engine()) as s:
+        detail = routes_scans.get_scan("scan_t", s)
+    assert sorted(x["page_url"].removeprefix(multi_site.rstrip("/")) for x in detail["shots"]) == ["/", "/a", "/b/", "/c"]
+
+
+def test_screenshot_failure_does_not_fail_the_scan(env, site):
+    async def boom(*_a, **_k):
+        raise RuntimeError("no screen")
+
+    env["patch"].setattr(pipeline.screenshots, "capture", boom)
+    sid = new_scan(site, "local")
+    asyncio.run(pipeline.run_scan(sid))
+    scan, rules, messages = result()
+    assert scan.status == "done" and "image-alt" in rules
+    assert any("couldn't take a screenshot" in m and "no screen" in m for m in messages)
+
+
+def test_to_percent_clips_and_drops_unhelpful_boxes():
+    from app.screenshots import to_percent
+
+    assert to_percent([100, 50, 200, 100], 1000, 500) == "10.00,10.00,20.00,20.00"
+    assert to_percent([900, 400, 400, 400], 1000, 500) == "90.00,80.00,10.00,20.00"  # clipped to the image
+    assert to_percent([0, 600, 10, 10], 1000, 500) is None  # below the captured part
+    assert to_percent([0, 0, 1000, 400], 1000, 500) is None  # covers most of the page
+
+
+# --- pages that are slow or unreachable --------------------------------------------------------------------
+
+
+@pytest.fixture
+def slow_for_remote():
+    """The fake TinyFish browser (user agent FakeRemote) waits too long for an answer; any other browser gets the page at once."""
+    from http.server import ThreadingHTTPServer
+    import time
+
+    class H(BaseHTTPRequestHandler):
+        def do_GET(self):
+            if "FakeRemote" in (self.headers.get("User-Agent") or ""):
+                time.sleep(4)
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html")
+            self.end_headers()
+            try:
+                self.wfile.write(PAGE)
+            except OSError:
+                pass  # the remote browser gave up and hung up
+
+        def log_message(self, *_a):
+            pass
+
+    srv = ThreadingHTTPServer(("127.0.0.1", 0), H)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    yield f"http://127.0.0.1:{srv.server_port}/"
+    srv.shutdown()
+
+
+def test_tinyfish_that_cannot_load_the_page_falls_back_to_local_chromium(env, slow_for_remote, monkeypatch):
+    monkeypatch.setattr(pipeline, "NAV_TIMEOUT", 1500)
+    sid = new_scan(slow_for_remote, "tinyfish")
+    asyncio.run(scan_with_remote_browser(env, sid, user_agent="FakeRemote"))
+    scan, rules, messages = result()
+    assert scan.status == "done" and scan.engine == "local" and "image-alt" in rules
+    assert any("couldn't load the page" in m and "didn't respond within 1s" in m and "retrying with local" in m for m in messages)
+    assert env["closed"] == ["br-1"]
+
+
+def test_forced_tinyfish_that_cannot_load_the_page_fails_with_a_readable_reason(env, slow_for_remote, monkeypatch):
+    monkeypatch.setattr(pipeline, "NAV_TIMEOUT", 1500)
+    env["cfg"] = cfg(tinyfish_api_key="k", scan_engine="tinyfish", database_url=env["cfg"].database_url)
+    sid = new_scan(slow_for_remote, "tinyfish")
+    asyncio.run(scan_with_remote_browser(env, sid, user_agent="FakeRemote"))
+    scan, _, _ = result()
+    assert scan.status == "failed" and scan.error.startswith("Couldn't load http://127.0.0.1")
+    assert "didn't respond" in scan.error and "Page.goto" not in scan.error
+    assert env["closed"] == ["br-1"]
+
+
+def test_load_reason_is_readable():
+    t = pipeline.load_reason("https://shop.example/x", Exception("Page.goto: Timeout 30000ms exceeded.\nCall log: ..."))
+    assert t == "shop.example didn't respond within 45s"
+    assert pipeline.load_reason("https://nope.invalid/", Exception("net::ERR_NAME_NOT_RESOLVED at https://nope.invalid/")) == "couldn't find nope.invalid"
+    assert pipeline.load_reason("http://localhost:1/", Exception("net::ERR_CONNECTION_REFUSED")) == "localhost:1 refused the connection"
+
+
+# --- content that only appears on scroll --------------------------------------------------------------------
+
+REVEAL_PAGE = """<!doctype html><html lang="en"><head><title>t</title><style>
+.spacer{height:2600px} .reveal{opacity:0;transition:opacity .2s} .reveal.in{opacity:1}
+</style></head><body><main><h1>Top</h1><div class="spacer"></div>
+<section class="reveal" id="late"><p>Below the fold</p></section><div class="spacer"></div>
+<section class="reveal" id="later"><p>Way below</p></section></main>
+<script>new IntersectionObserver((es,o)=>es.forEach(e=>{if(e.isIntersecting){e.target.classList.add('in');o.unobserve(e.target)}}))
+ .observe(document.getElementById('late'));
+ const io=new IntersectionObserver(es=>es.forEach(e=>{if(e.isIntersecting)e.target.classList.add('in')}));io.observe(document.getElementById('later'));
+</script></body></html>"""
+
+
+def test_reveal_lazy_content_shows_sections_that_appear_on_scroll_and_returns_to_the_top(monkeypatch):
+    monkeypatch.setattr(pipeline, "REVEAL_SETTLE", 0.4)
+
+    async def go():
+        async with async_playwright() as pw:
+            b = await pw.chromium.launch()
+            page = await b.new_page(viewport={"width": 1000, "height": 700})
+            await page.set_content(REVEAL_PAGE)
+            opacity = "id => parseFloat(getComputedStyle(document.getElementById(id)).opacity)"
+            before = [await page.evaluate(opacity, i) for i in ("late", "later")]
+            await pipeline.reveal_lazy_content(page)
+            after = [await page.evaluate(opacity, i) for i in ("late", "later")]
+            y = await page.evaluate("window.scrollY")
+            await b.close()
+            return before, after, y
+
+    before, after, y = asyncio.run(go())
+    assert before == [0.0, 0.0]  # hidden until scrolled to, as on the real site
+    assert after == [1.0, 1.0] and y == 0
+
+
+def test_reveal_lazy_content_stops_on_a_page_that_never_ends(monkeypatch):
+    monkeypatch.setattr(pipeline, "REVEAL_STEP_WAIT", 0.01)
+    monkeypatch.setattr(pipeline, "REVEAL_SETTLE", 0.01)
+    monkeypatch.setattr(pipeline, "REVEAL_MAX_STEPS", 5)
+
+    async def go():
+        async with async_playwright() as pw:
+            b = await pw.chromium.launch()
+            page = await b.new_page(viewport={"width": 800, "height": 600})
+            # Every scroll appends another screenful, like an infinite feed.
+            await page.set_content('<body style="margin:0"><div style="height:1000px"></div><script>addEventListener("scroll",()=>{const d=document.createElement("div");d.style.height="1000px";document.body.append(d)})</script></body>')
+            await pipeline.reveal_lazy_content(page)
+            h = await page.evaluate("document.documentElement.scrollHeight")
+            await b.close()
+            return h
+
+    assert asyncio.run(go()) < 1000 * 12  # bounded by the step cap, not endless

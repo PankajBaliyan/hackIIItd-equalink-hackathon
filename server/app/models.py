@@ -1,5 +1,6 @@
 from datetime import datetime, timezone
 
+from sqlalchemy import Column, LargeBinary
 from sqlmodel import Field, SQLModel
 
 
@@ -92,6 +93,20 @@ class IssueRow(SQLModel, table=True):
     detector: str = "axe"  # "axe" (rendered page) | "static" (source rules) | "llm" (OpenAI review of a page or its source)
     source_file: str | None = None  # repo scans: path of the file and 1-based line of the problem
     source_line: int | None = None
+    box: str | None = None  # page scans: "x,y,w,h" in percent of the page screenshot, where the element sits
+
+
+class ShotRow(SQLModel, table=True):
+    """A screenshot of one scanned page (JPEG bytes) so findings can be shown where they are."""
+
+    __tablename__ = "shot"
+
+    id: int | None = Field(default=None, primary_key=True)
+    scan_id: str = Field(index=True)
+    page_url: str
+    width: int
+    height: int
+    data: bytes = Field(sa_column=Column(LargeBinary, nullable=False))
 
 
 class FixRow(SQLModel, table=True):

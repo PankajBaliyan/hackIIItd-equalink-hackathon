@@ -19,6 +19,7 @@ import type {
   PullRequest,
   Scan,
   ScanEvent,
+  Shot,
   Severity,
 } from "@/lib/types";
 
@@ -26,6 +27,7 @@ export interface ScanState {
   scan: Scan | null;
   issues: Issue[];
   fixes: Fix[];
+  shots: Shot[];
   events: ScanEvent[];
   counters: Record<Severity, number>;
   pr: PullRequest | null;
@@ -38,7 +40,7 @@ export interface ScanState {
 type Action =
   | { type: "reset" }
   | { type: "scan"; scan: Scan }
-  | { type: "detail"; scan: Scan; issues: Issue[]; fixes: Fix[]; pr?: PullRequest }
+  | { type: "detail"; scan: Scan; issues: Issue[]; fixes: Fix[]; shots?: Shot[]; pr?: PullRequest }
   | { type: "event"; event: ScanEvent }
   | { type: "log"; events: ScanEvent[] }
   | { type: "connection"; connection: ConnectionState }
@@ -49,6 +51,7 @@ const initial: ScanState = {
   scan: null,
   issues: [],
   fixes: [],
+  shots: [],
   events: [],
   counters: emptyCounters(),
   pr: null,
@@ -69,6 +72,7 @@ function reducer(state: ScanState, a: Action): ScanState {
         scan: a.scan,
         issues: a.issues,
         fixes: a.fixes,
+        shots: a.shots ?? [],
         pr: a.pr ?? state.pr,
         error: null,
       };
@@ -125,7 +129,13 @@ export function ScanStoreProvider({ children }: { children: ReactNode }) {
       (event) => {
         dispatch({ type: "event", event });
         // Pull full issue/fix data as soon as each stage that produces it completes.
-        if (event.stage === "done" || event.stage === "fixing" || event.stage === "verifying") {
+        if (
+          event.type === "shot" ||
+          event.stage === "done" ||
+          event.stage === "failed" ||
+          event.stage === "fixing" ||
+          event.stage === "verifying"
+        ) {
           void api.getScan(id).then((d) => dispatch({ type: "detail", ...d }));
         }
       },

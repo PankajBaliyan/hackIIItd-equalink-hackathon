@@ -230,7 +230,13 @@ export function LiveScan({ id }: { id: string }) {
         </div>
         <div className="space-y-2">
           <h2 className="text-lg">Screenshot</h2>
-          <AnnotatedScreenshot />
+          <AnnotatedScreenshot
+            scanId={id}
+            shots={s.shots}
+            issues={s.issues}
+            source={scan.mode === "source"}
+            finished={done || failed}
+          />
         </div>
       </section>
     </div>

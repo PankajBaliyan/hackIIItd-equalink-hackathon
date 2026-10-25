@@ -16,6 +16,8 @@ class Settings(BaseSettings):
     # Scans fetch URLs the user supplies. Allow localhost/private targets for local dev; set false when deployed.
     allow_private_targets: bool = True
     max_site_pages: int = 20
+    # Page screenshots are capped to this many CSS pixels of height (very long pages are cut off at the bottom).
+    screenshot_max_height: int = 4000
 
     # Where scans render pages: "auto" uses a TinyFish remote browser for public URLs when TINYFISH_API_KEY is set
     # and local Chromium otherwise (TinyFish can't reach localhost); "tinyfish" and "local" force one.

@@ -1,5 +1,6 @@
 import {
   ArrowDown,
+  Camera,
   Check,
   Copy,
   CircleSlash,
@@ -20,6 +21,7 @@ const META: Record<ScanEvent["type"], { Icon: LucideIcon; cls: string; label: st
   fix: { Icon: Pencil, cls: "text-minor", label: "Fix proposed" },
   validated: { Icon: Check, cls: "text-success", label: "Validated" },
   rejected: { Icon: CircleSlash, cls: "text-moderate", label: "Rejected" },
+  shot: { Icon: Camera, cls: "text-muted", label: "Screenshot" },
 };
 const GLYPH = /^[▸✗✎✓⊘]\s*/;
 

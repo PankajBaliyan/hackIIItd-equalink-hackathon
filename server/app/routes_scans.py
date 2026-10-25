@@ -6,14 +6,14 @@ from datetime import datetime
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
 from app import pipeline, tinyfish_browser
 from app.config import Settings, get_settings
 from app.db import engine, get_session
-from app.models import EventRow, FixRow, IssueRow, RuleDoc, Scan
+from app.models import EventRow, FixRow, IssueRow, RuleDoc, Scan, ShotRow
 from app.routes_sites import normalize_url, REPO_RE
 
 router = APIRouter(prefix="/scans", tags=["scans"])
@@ -89,10 +89,20 @@ def get_scan(scan_id: str, db: SessionDep):
     ids = {i.rule_doc_id for i in issues if i.rule_doc_id}
     docs = {d.id: d for d in db.exec(select(RuleDoc).where(RuleDoc.id.in_(ids))).all()} if ids else {}  # type: ignore[attr-defined]
     fixes = db.exec(select(FixRow).where(FixRow.scan_id == scan_id)).all()
+    shots = db.exec(select(ShotRow.id, ShotRow.page_url, ShotRow.width, ShotRow.height).where(ShotRow.scan_id == scan_id).order_by(ShotRow.id)).all()  # type: ignore[arg-type]
     return {
         "scan": scan_out(scan), "issues": [pipeline.issue_dict(i, docs.get(i.rule_doc_id)) for i in issues],
         "fixes": [pipeline.fix_dict(f) for f in fixes],
+        "shots": [{"id": i, "page_url": u, "width": w, "height": h} for i, u, w, h in shots],
     }
+
+
+@router.get("/{scan_id}/shots/{shot_id}")
+def get_shot(scan_id: str, shot_id: int, db: SessionDep):
+    shot = db.get(ShotRow, shot_id)
+    if not shot or shot.scan_id != scan_id:
+        raise HTTPException(404, "Screenshot not found.")
+    return Response(shot.data, media_type="image/jpeg", headers={"Cache-Control": "private, max-age=86400"})
 
 
 @router.get("/{scan_id}/log")
