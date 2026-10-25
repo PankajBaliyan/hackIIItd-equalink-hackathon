@@ -149,11 +149,6 @@ export const realApi: ScanApi = {
     }),
   getGithub: () => request<GithubStatus>("/integrations/github"),
   connectGithub: () => request<GithubStatus>("/integrations/github/connect", { method: "POST" }),
-  connectGithubToken: (token) =>
-    request<GithubStatus>("/integrations/github/token", {
-      method: "POST",
-      body: JSON.stringify({ token }),
-    }),
   disconnectGithub: () => request<GithubStatus>("/integrations/github", { method: "DELETE" }),
   setGithubRepo: (fullName, enabled) =>
     request<GithubStatus>("/integrations/github/repos", {
@@ -198,7 +193,6 @@ export function getApi(): Promise<ScanApi> {
           compareBranches: realApi.compareBranches,
           createPull: realApi.createPull,
           connectGithub: realApi.connectGithub,
-          connectGithubToken: realApi.connectGithubToken,
           disconnectGithub: realApi.disconnectGithub,
           setGithubRepo: realApi.setGithubRepo,
         }

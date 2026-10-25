@@ -191,7 +191,6 @@ export interface ScanApi {
   ship(id: string, fixIds?: string[]): Promise<PullRequest>;
   getGithub(): Promise<GithubStatus>;
   connectGithub(): Promise<GithubStatus>;
-  connectGithubToken(token: string): Promise<GithubStatus>;
   disconnectGithub(): Promise<GithubStatus>;
   setGithubRepo(fullName: string, enabled: boolean): Promise<GithubStatus>;
   /** Streams events until the scan finishes; returns an unsubscribe function. */

@@ -96,25 +96,6 @@ def create_app(db_path=None):
         store.insert(detail.model_dump(), payload.page_html, replace_demo=is_demo)
         return detail
 
-    demo_lock = asyncio.Lock()
-
-    async def ensure_demo():
-        async with demo_lock:
-            try:
-                store.get("demo")
-                if store.setting("demo_version") == 2:
-                    return
-            except HTTPException as error:
-                if error.status_code != 404:
-                    raise
-            payload = ImportScan.model_validate_json((ROOT / "demo_scan.json").read_text(encoding="utf-8"))
-            await import_detail(payload, "demo", True)
-            store.set_setting("demo_version", 2)
-
-    @app.get("/health")
-    async def health():
-        return {"status": "ok", "service": "equalink-fixes"}
-
     @app.post("/scans/import", response_model=ScanDetail, status_code=201)
     async def import_scan(payload: ImportScan):
         return await import_detail(payload)
@@ -140,13 +121,10 @@ def create_app(db_path=None):
 
     @app.get("/scans", response_model=list[Scan])
     async def list_scans():
-        await ensure_demo()
         return store.list()
 
     @app.get("/scans/{scan_id}", response_model=ScanDetail)
     async def get_scan(scan_id: str):
-        if scan_id == "demo":
-            await ensure_demo()
         return store.get(scan_id)[0]
 
     @app.get("/scans/{scan_id}/fixes", response_model=list[Fix])

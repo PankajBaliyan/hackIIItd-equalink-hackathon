@@ -6,7 +6,7 @@ from typing import Annotated, Literal
 import jwt
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import RedirectResponse
-from pydantic import BaseModel, Field, SecretStr
+from pydantic import BaseModel, Field
 from sqlmodel import Session, delete, select
 
 from app import github
@@ -38,10 +38,6 @@ class GithubStatus(BaseModel):
 class RepoPatch(BaseModel):
     full_name: str
     enabled: bool
-
-
-class TokenConnect(BaseModel):
-    token: SecretStr = Field(min_length=20, max_length=500)
 
 
 def _disconnected(s: Settings, install_url: str | None = None) -> GithubStatus:
@@ -130,21 +126,6 @@ async def connect(s: SettingsDep, db: SessionDep):
         return _disconnected(s, install_url=github.oauth_authorize_url(s, _sign_state(s, "gh-oauth")))
     except github.GitHubError as e:
         raise HTTPException(502, e.message)
-
-
-@router.post("/token", response_model=GithubStatus)
-async def connect_token(body: TokenConnect, s: SettingsDep, db: SessionDep):
-    """Validate a pasted PAT and keep it server-side; it is never returned to the browser."""
-    token = body.token.get_secret_value().strip()
-    if not token:
-        raise HTTPException(422, "A GitHub token is required.")
-    try:
-        account = await github.pat_user(token)
-        conn = _save(db, "pat", account, access_token=token)
-        return await _status(s, db, conn)
-    except github.GitHubError as e:
-        status = e.status if 400 <= e.status < 500 else 502
-        raise HTTPException(status, e.message)
 
 
 @router.get("/callback")

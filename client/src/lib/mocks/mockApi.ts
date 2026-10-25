@@ -224,9 +224,6 @@ export const mockApi: ScanApi = {
     };
     return copy(github);
   },
-  async connectGithubToken() {
-    return mockApi.connectGithub();
-  },
   async disconnectGithub() {
     await delay(300);
     github = { connected: false, repos: [] };

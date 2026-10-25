@@ -1,6 +1,6 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { Check, ExternalLink, Github, GitPullRequest, ShieldCheck } from "lucide-react";
-import { type FormEvent, useEffect, useState } from "react";
+import { Check, Github, GitPullRequest, ShieldCheck } from "lucide-react";
+import { useEffect } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 
@@ -31,7 +31,6 @@ const PERMISSIONS = [
 ];
 
 function Page() {
-  const [token, setToken] = useState("");
   const qc = useQueryClient();
   const { data, isPending, isError, refetch } = useGithub();
 
@@ -49,61 +48,9 @@ function Page() {
   const fail = (title: string) => (e: unknown) =>
     toast.error(title, { description: e instanceof Error ? e.message : undefined });
 
-  const redirects = data?.mode === "oauth" || data?.mode === "app";
   const connect = useGithubAction((api) => api.connectGithub());
-  const connectToken = useGithubAction((api, value: string) => api.connectGithubToken(value));
   const disconnect = useGithubAction((api) => api.disconnectGithub());
   const toggle = useGithubAction((api, name: string, on: boolean) => api.setGithubRepo(name, on));
-  const submitToken = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    connectToken.mutate([token], {
-      onSuccess: () => setToken(""),
-      onError: fail("Couldn't connect GitHub"),
-    });
-  };
-  const tokenAccessForm = (
-    <form className="space-y-3" onSubmit={submitToken}>
-      <a
-        href="https://github.com/settings/personal-access-tokens/new"
-        target="_blank"
-        rel="noopener noreferrer"
-        className="inline-flex items-center gap-2 text-sm font-medium text-brand underline underline-offset-2"
-      >
-        Open GitHub token page
-        <ExternalLink aria-hidden className="size-4" />
-        <span className="sr-only"> (opens in a new tab)</span>
-      </a>
-      <div className="space-y-1.5">
-        <label htmlFor="github-token" className="block text-sm font-medium">
-          GitHub personal access token
-        </label>
-        <input
-          id="github-token"
-          type="password"
-          value={token}
-          onChange={(event) => setToken(event.target.value)}
-          autoComplete="off"
-          spellCheck={false}
-          required
-          minLength={20}
-          placeholder="github_pat_…"
-          className="h-10 w-full rounded-md border bg-background px-3 font-mono text-sm outline-none focus-visible:ring-2 focus-visible:ring-brand"
-        />
-      </div>
-      <Button
-        type="submit"
-        variant="primary"
-        loading={connectToken.isPending}
-        disabled={token.trim().length < 20}
-      >
-        {connectToken.isPending
-          ? "Checking token…"
-          : data?.connected
-            ? "Replace token and refresh repositories"
-            : "Connect and load repositories"}
-      </Button>
-    </form>
-  );
 
   return (
     <div className="mx-auto max-w-3xl space-y-6">
@@ -137,9 +84,7 @@ function Page() {
             <Github aria-hidden className="size-5" /> Connect GitHub
           </h2>
           <p className="text-sm text-muted">
-            {redirects
-              ? "You'll be sent to GitHub to sign in and approve access, then returned here."
-              : "Create a fine-grained token on GitHub, then paste it below. The backend validates it and keeps it server-side."}
+            You'll be sent to GitHub to sign in and approve access, then returned here.
           </p>
           <ul className="space-y-2 text-sm">
             {PERMISSIONS.map((p) => (
@@ -149,17 +94,13 @@ function Page() {
               </li>
             ))}
           </ul>
-          {redirects ? (
-            <Button
-              variant="primary"
-              loading={connect.isPending}
-              onClick={() => connect.mutate([], { onError: fail("Couldn't connect GitHub") })}
-            >
-              {connect.isPending ? "Connecting…" : "Sign in with GitHub"}
-            </Button>
-          ) : (
-            tokenAccessForm
-          )}
+          <Button
+            variant="primary"
+            loading={connect.isPending}
+            onClick={() => connect.mutate([], { onError: fail("Couldn't connect GitHub") })}
+          >
+            {connect.isPending ? "Connecting…" : "Sign in with GitHub"}
+          </Button>
         </section>
       ) : (
         <>
@@ -215,17 +156,6 @@ function Page() {
             <p className="text-sm text-muted">
               Turn a repository off to stop EquaLink opening PRs on it.
             </p>
-          </section>
-
-          <section aria-labelledby="gh-token" className="space-y-4 rounded-card border bg-surface p-5">
-            <div className="space-y-1">
-              <h2 id="gh-token" className="text-xl">GitHub token access</h2>
-              <p className="text-sm text-muted">
-                Paste a different token to replace the current connection and reload its repositories.
-                The token is sent only to FastAPI and is never stored in the browser.
-              </p>
-            </div>
-            {tokenAccessForm}
           </section>
         </>
       )}
