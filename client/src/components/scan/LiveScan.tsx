@@ -4,6 +4,8 @@ import { useEffect, useMemo, useState } from "react";
 
 import { AnnotatedScreenshot } from "@/components/scan/AnnotatedScreenshot";
 import { ScoreRing } from "@/components/scan/ScoreRing";
+import { completionSummary } from "@/components/scan/summary";
+import { scoreView } from "@/components/scan/scoreView";
 import { TerminalFeed } from "@/components/scan/TerminalFeed";
 import { FocusHeading } from "@/components/shell/PagePlaceholder";
 import { AnimatedCounter } from "@/components/ui/animated-counter";
@@ -54,6 +56,11 @@ export function LiveScan({ id }: { id: string }) {
   const failed = scan?.status === "failed";
   const done = scan?.status === "done";
   const running = !!scan && !done && !failed;
+  const summary = useMemo(() => completionSummary(s.issues, s.fixes), [s.issues, s.fixes]);
+  const scores = useMemo(
+    () => (s.scan ? scoreView(s.scan, s.issues, s.fixes) : {}),
+    [s.scan, s.issues, s.fixes],
+  );
   const counters = useMemo(() => countBySeverity(s.issues), [s.issues]);
   const elapsed = useElapsed(scan?.created_at, running, s.events[s.events.length - 1]?.ts);
 
@@ -90,10 +97,12 @@ export function LiveScan({ id }: { id: string }) {
     );
   }
 
+  // A failed scan stops on the stage it was in when it failed: the last event before the "failed" one.
+  const lastStage = s.events.filter((e) => e.stage !== "failed").at(-1)?.stage;
   const current = failed
     ? Math.max(
         0,
-        STAGES.findIndex((x) => x.id === s.events.at(-2)?.stage),
+        STAGES.findIndex((x) => x.id === lastStage),
       )
     : STAGES.findIndex((x) => x.id === scan.status);
   const pageProgress = done
@@ -107,9 +116,18 @@ export function LiveScan({ id }: { id: string }) {
           {scan.url}
         </FocusHeading>
         <div className="flex flex-wrap items-center gap-2">
-          <Chip>WCAG {scan.level}</Chip>
-          <Chip>{scan.scope === "site" ? "Full site" : "Single page"}</Chip>
-          <Chip>{scan.mode === "repo" ? "Repo connected" : "URL only"}</Chip>
+          {scan.mode !== "source" && <Chip>WCAG {scan.level}</Chip>}
+          {scan.mode === "source" ? (
+            <Chip>Source code</Chip>
+          ) : (
+            <>
+              <Chip>{scan.scope === "site" ? "Full site" : "Single page"}</Chip>
+              <Chip>{scan.mode === "repo" ? "Repo connected" : "URL only"}</Chip>
+              {scan.engine && scan.engine !== "source" && (
+                <Chip>{scan.engine === "tinyfish" ? "TinyFish browser" : "Local browser"}</Chip>
+              )}
+            </>
+          )}
           {elapsed && (
             <Chip>
               Elapsed <span className="tabular">{elapsed}</span>
@@ -143,21 +161,23 @@ export function LiveScan({ id }: { id: string }) {
           <AlertTriangle aria-hidden className="size-5 text-critical" />
           <p>
             <strong>Scan failed.</strong>{" "}
-            <span className="text-muted">Check the log below, then start a new scan.</span>
+            <span className="text-muted">
+              {scan.error ? `${scan.error} ` : ""}Check the log below, then start a new scan.
+            </span>
           </p>
         </div>
       )}
 
       {done && (
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-card border border-success bg-surface p-4">
-          <p className="font-medium">
-            Scan complete. {s.issues.length} issues found and fixes are ready to review.
-          </p>
-          <Button variant="primary" asChild>
-            <Link to="/scans/$id/fixes" params={{ id }}>
-              Review fixes <ArrowRight />
-            </Link>
-          </Button>
+          <p className="font-medium">{summary.text}</p>
+          {summary.action && (
+            <Button variant="primary" asChild>
+              <Link to="/scans/$id/fixes" params={{ id }}>
+                {summary.action === "fixes" ? "Review fixes" : "Review issues"} <ArrowRight />
+              </Link>
+            </Button>
+          )}
         </div>
       )}
 
@@ -165,8 +185,20 @@ export function LiveScan({ id }: { id: string }) {
         <h2 id="live-stats" className="sr-only">
           Live results
         </h2>
-        <div className="grid place-items-center rounded-card border bg-surface p-4">
-          <ScoreRing score={scan.score_before} label="Score before" />
+        <div className="flex flex-col items-center justify-center gap-3 rounded-card border bg-surface p-4">
+          <div className="flex flex-wrap items-start justify-center gap-6">
+            <ScoreRing score={scores.before?.value} label={scores.before?.label ?? "Score"} />
+            {scores.after && <ScoreRing score={scores.after.value} label={scores.after.label} />}
+          </div>
+          {scores.delta != null && (
+            <p className="tabular text-sm text-muted">
+              <strong className={scores.delta > 0 ? "text-success" : "text-text"}>
+                {scores.delta > 0 ? `+${scores.delta}` : scores.delta}
+              </strong>{" "}
+              {Math.abs(scores.delta) === 1 ? "point" : "points"} from validated fixes
+              {scores.after?.final ? "" : " so far"}
+            </p>
+          )}
         </div>
         <div className="space-y-4 rounded-card border bg-surface p-4">
           <ul className="grid grid-cols-2 gap-3 sm:grid-cols-4">
@@ -191,7 +223,7 @@ export function LiveScan({ id }: { id: string }) {
         </div>
       </section>
 
-      <TerminalFeed events={s.events} />
+      <TerminalFeed events={s.events} finished={done || failed} />
 
       <section aria-labelledby="pages-title" className="grid gap-4 md:grid-cols-2">
         <div className="space-y-2">
@@ -215,7 +247,13 @@ export function LiveScan({ id }: { id: string }) {
         </div>
         <div className="space-y-2">
           <h2 className="text-lg">Screenshot</h2>
-          <AnnotatedScreenshot />
+          <AnnotatedScreenshot
+            scanId={id}
+            shots={s.shots}
+            issues={s.issues}
+            source={scan.mode === "source"}
+            finished={done || failed}
+          />
         </div>
       </section>
     </div>

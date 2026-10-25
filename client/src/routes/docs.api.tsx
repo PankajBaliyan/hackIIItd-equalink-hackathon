@@ -20,7 +20,7 @@ const SECTIONS = [
 ] as const;
 
 const ENDPOINTS = [
-  ["POST", "/scans", "Start a scan. Body: url, repo?, level, scope."],
+  ["POST", "/scans", 'Start a scan. Body: url (or target: "repo" with repo), level, scope.'],
   ["GET", "/scans", "List scans."],
   ["GET", "/scans/{id}", "Scan state: issues, fixes, score, PR."],
   ["GET", "/scans/{id}/events", "Server-Sent Events stream of progress."],
@@ -33,9 +33,10 @@ const ENDPOINTS = [
 const ENV = [
   ["VITE_USE_MOCKS", "true runs the dashboard on built-in mock data"],
   ["VITE_API_BASE_URL", "Backend base URL, default http://localhost:8000"],
-  ["TINYFISH_API_KEY", "Backend: TinyFish Fetch, Agent and Search"],
-  ["ANTHROPIC_API_KEY", "Backend: Claude for diagnosis and fixes"],
-  ["GITHUB_APP_ID / GITHUB_APP_PRIVATE_KEY / GITHUB_WEBHOOK_SECRET", "Backend: GitHub App"],
+  ["TINYFISH_API_KEY", "Backend: TinyFish remote browser for scans, and the W3C rules sync"],
+  ["SCAN_ENGINE", "auto (default), tinyfish or local. auto uses TinyFish for public URLs"],
+  ["OPENAI_API_KEY", "Backend: OpenAI review in repo scans (and fixes, later)"],
+  ["GITHUB_CLIENT_ID / GITHUB_CLIENT_SECRET", "Backend: GitHub OAuth App for user login"],
 ] as const;
 
 function Page() {

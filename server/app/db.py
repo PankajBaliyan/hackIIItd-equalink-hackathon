@@ -1,4 +1,6 @@
+import json
 from collections.abc import Iterator
+from datetime import datetime, timezone
 
 from sqlalchemy import inspect, text
 from sqlmodel import Session, SQLModel, create_engine, select
@@ -25,6 +27,20 @@ def init_db() -> None:
     if "access_token" not in cols:
         with engine().begin() as conn:
             conn.execute(text("ALTER TABLE githubconnection ADD COLUMN access_token VARCHAR"))
+    if "engine" not in {c["name"] for c in insp.get_columns("scan")}:
+        with engine().begin() as conn:
+            conn.execute(text("ALTER TABLE scan ADD COLUMN engine VARCHAR NOT NULL DEFAULT 'local'"))
+    issue_cols = {c["name"] for c in insp.get_columns("issue")}
+    for name, ddl in (
+        ("rule_doc_id", "INTEGER"),
+        ("detector", "VARCHAR NOT NULL DEFAULT 'axe'"),
+        ("source_file", "VARCHAR"),
+        ("source_line", "INTEGER"),
+        ("box", "VARCHAR"),
+    ):
+        if name not in issue_cols:
+            with engine().begin() as conn:
+                conn.execute(text(f"ALTER TABLE issue ADD COLUMN {name} {ddl}"))
     if "origin" not in {c["name"] for c in insp.get_columns("ruledoc")}:
         with engine().begin() as conn:
             conn.execute(text("ALTER TABLE ruledoc ADD COLUMN origin VARCHAR NOT NULL DEFAULT 'manual'"))
@@ -43,5 +59,6 @@ def fail_orphaned_scans() -> None:
         for scan in db.exec(select(Scan).where(Scan.status.notin_(["done", "failed"]))).all():  # type: ignore[attr-defined]
             scan.status, scan.error = "failed", "Server restarted during the scan."
             db.add(scan)
-            db.add(EventRow(scan_id=scan.id, payload='{"stage":"failed","type":"info","ts":"","message":"scan failed: server restarted"}'))
+            ts = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+            db.add(EventRow(scan_id=scan.id, payload=json.dumps({"stage": "failed", "type": "info", "ts": ts, "message": "scan failed: server restarted"})))
         db.commit()

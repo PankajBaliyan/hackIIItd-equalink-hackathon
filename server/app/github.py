@@ -4,7 +4,6 @@ import time
 from urllib.parse import quote
 
 import httpx
-import jwt
 
 from app.config import Settings
 
@@ -20,11 +19,11 @@ class GitHubError(Exception):
         self.message = message
 
 
-def _client(token: str | None = None) -> httpx.AsyncClient:
+def _client(token: str | None = None, transport: httpx.AsyncBaseTransport | None = None) -> httpx.AsyncClient:
     headers = dict(HEADERS)
     if token:
         headers["Authorization"] = f"Bearer {token}"
-    return httpx.AsyncClient(base_url=API, headers=headers, timeout=15)
+    return httpx.AsyncClient(base_url=API, headers=headers, timeout=15, transport=transport)
 
 
 async def _check(res: httpx.Response) -> dict:
@@ -41,22 +40,7 @@ async def _check(res: httpx.Response) -> dict:
     raise GitHubError(res.status_code, f"GitHub said: {msg}")
 
 
-def app_jwt(s: Settings) -> str:
-    now = int(time.time())
-    payload = {"iat": now - 60, "exp": now + 9 * 60, "iss": s.github_app_id}
-    return jwt.encode(payload, s.app_private_key, algorithm="RS256")
 
-
-async def installation_token(s: Settings, installation_id: int) -> str:
-    async with _client(app_jwt(s)) as c:
-        data = await _check(await c.post(f"/app/installations/{installation_id}/access_tokens"))
-    return data["token"]
-
-
-async def installation_account(s: Settings, installation_id: int) -> str:
-    async with _client(app_jwt(s)) as c:
-        data = await _check(await c.get(f"/app/installations/{installation_id}"))
-    return data["account"]["login"]
 
 
 async def pat_user(token: str) -> str:
@@ -165,3 +149,24 @@ async def create_pull(token: str, repo: str, base: str, head: str, title: str, b
             )
         )
     return _pull(repo, data)
+async def default_branch(c: httpx.AsyncClient, full_name: str) -> str:
+    return (await _check(await c.get(f"/repos/{full_name}")))["default_branch"]
+
+
+async def repo_blobs(c: httpx.AsyncClient, full_name: str, ref: str) -> tuple[list[dict], bool]:
+    """(files in the tree at `ref` as {path, size}, whether GitHub truncated the listing)."""
+    data = await _check(await c.get(f"/repos/{full_name}/git/trees/{ref}", params={"recursive": "1"}))
+    return [{"path": t["path"], "size": t.get("size", 0)} for t in data["tree"] if t["type"] == "blob"], bool(data.get("truncated"))
+
+
+async def file_text(c: httpx.AsyncClient, full_name: str, path: str, ref: str) -> str:
+    res = await c.get(
+        f"/repos/{full_name}/contents/{quote(path)}", params={"ref": ref}, headers={"Accept": "application/vnd.github.raw+json"}
+    )
+    if not res.is_success:
+        await _check(res)
+    return res.text
+
+
+def client(token: str | None = None, transport: httpx.AsyncBaseTransport | None = None) -> httpx.AsyncClient:
+    return _client(token, transport)

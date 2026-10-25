@@ -1,0 +1,362 @@
+Pending Points:
+
+===================================================================================
+===================================================================================
+
+Module === Scan Now
+
+1. "Auto-open PR when done" does nothing.
+   auto_ship is sent by the form and accepted by ScanIn, but nothing reads it.
+   POST /scans/{id}/ship returns a hardcoded 501: "Opening pull requests isn't implemented yet."
+   (server/app/routes_scans.py)
+
+2. The TrustStrip claims are not true yet.
+   "every fix is a PR" is not true until PRs are built (item 1). "axe-core re-checks every fix" is now true for page scans.
+   (client/src/components/scan/TrustStrip.tsx)
+
+3. Private-address blocking is off by default.
+   ALLOW_PRIVATE_TARGETS=true, so it must be set to false for a deployed server (SSRF protection).
+   (server/.env.example, server/app/pipeline.py: check_target)
+
+
+Done:
+- Website scans were axe-only. They now also get an OpenAI review of the rendered page when OPENAI_API_KEY
+  is set, and fall back to axe-only without a key or if the review fails. (server/app/page_llm.py)
+- Fix generation and verification (server/app/fixer.py). Axe issues on pages get an OpenAI-proposed patch that is
+  checked by re-running axe-core on the live DOM; static findings in repo scans are checked by re-running the static
+  rules on the patched file. Needs OPENAI_API_KEY; without it issues are left for human review.
+  Still not covered: issues found by the OpenAI review (not re-checkable), html/body-level issues, and fixes that
+  overlap each other in one file (relevant when PRs are built).
+- Full-site crawl (server/app/pipeline.py). scope=site now crawls breadth-first, following same-origin links on
+  every scanned page, up to MAX_SITE_PAGES (default 20, was 5). A page that fails to load is skipped (fresh browser
+  tab) instead of failing the scan, and pages beyond the limit are reported in the scan log.
+  Still sequential (one page at a time), so large limits make slow scans; no sitemap.xml or robots.txt handling.
+- Submit button label. It said "Scan with TinyFish" even when the scan fell back to local Chromium. It now says
+  "Scan website"; the engine actually used is shown on the live scan page (TinyFish browser / Local browser chip).
+
+
+===================================================================================
+===================================================================================
+Module === Live Scan
+
+Working and dynamic: header chips (incl. engine used), stepper/status, live SSE agent log with reconnect +
+polling fallback, severity counters, elapsed timer, pages list, sidebar link to the latest scan.
+
+1. "Pipeline progress" is a stage estimate, not real progress.
+   Stage index / 6, capped at 95%. No "page 3 of 12" detail, and "N pages with issues" does not say how many
+   pages were scanned. (client/src/components/scan/LiveScan.tsx)
+
+2. The "Shipping" step in the stepper is never reached (PRs are not built, see Scan Now item 1).
+
+Done:
+- Finished or failed scans now open with their stored log. New GET /scans/{id}/log returns the events as JSON and
+  the store loads it for a scan that is already over, so the log, elapsed timer and the stepper stage (the stage a
+  failed scan stopped in) are right. scan.error is now returned by the API and shown in the "Scan failed" banner.
+  A scan with no recorded log says so instead of "Waiting for the agent...". (server/app/routes_scans.py,
+  client/src/state/scanStore.tsx, client/src/components/scan/LiveScan.tsx)
+- The agent log no longer duplicates after a reconnect. The client remembers the last event id it received and
+  reconnects with ?after=<id>; the server's /scans/{id}/events accepts it (alongside Last-Event-ID) and only sends
+  the events after it. (client/src/lib/sse.ts, server/app/routes_scans.py)
+- The "Scan complete" banner now reflects the real result: "No issues found" (no button) when clean; "N issues
+  found, no automatic fixes were proposed" with a "Review issues" button when there are none; otherwise
+  "N issues found: X validated fixes ready to review, Y rejected by the rules engine, Z need human review" with
+  "Review fixes". (client/src/components/scan/summary.ts, LiveScan.tsx)
+- The screenshot panel shows the real page. Each scanned page is captured (JPEG, stored in the DB table `shot`,
+  height capped by SCREENSHOT_MAX_HEIGHT=4000) and every finding that can be located gets a box (percent of the
+  image, stored on the issue), drawn in its severity colour. Full-site scans get a page picker. GET
+  /scans/{id}/shots/{shot_id} serves the image; a "shot" log event makes the page show it while the scan runs.
+  Source scans say there is no page to show. (server/app/screenshots.py, client/src/components/scan/AnnotatedScreenshot.tsx)
+  Not covered: boxes for elements inside iframes / shadow DOM or hidden elements, very long pages are cut at
+  4000px, and no click-a-box-to-open-the-issue yet.
+- Pages that reveal content on scroll (opacity-0 sections, lazy images) were half blank in the screenshot and axe
+  judged hidden elements. render() now scrolls down the page and back before axe and the screenshot
+  (server/app/pipeline.py: reveal_lazy_content; capped at 30 steps, so endless-scroll pages stop).
+  Not covered: sections that hide again when scrolled out of view, and sites that need a click to show content.
+- Scrolling the screenshot no longer drags the whole page. The screenshot box (and the agent log) now use
+  overscroll-behavior: contain, so wheeling past either end of the screenshot stays inside it; before, wheeling up
+  past its top sent the whole UI to the top. The agent log's hidden screen-reader labels were also escaping the log
+  and adding 24px of blank scroll area per log line under the page; the log is now their containing block.
+  (client/src/components/scan/AnnotatedScreenshot.tsx, TerminalFeed.tsx)
+- The sidebar no longer links Live Scan / Fixes to a made-up "demo" scan. With no scans yet they are shown greyed
+  out and not clickable (title "Run a scan first", read out by screen readers as "run a scan first"); once a scan
+  exists they link to the most recent one. The hardcoded DEMO_SCAN_ID is gone; nav items now carry `needsScan`.
+  (client/src/lib/nav.ts, client/src/components/shell/AppShell.tsx)
+- The score rings are live and show before and after. The "before" ring fills in while issues stream in ("Score so
+  far", estimated with the server's own formula incl. Python's round-half-to-even) and locks to score_before when
+  the scan ends. From the fixing stage a second ring ("After fixes so far") follows the validated fixes and locks to
+  score_after, with a "+N points from validated fixes" line. No second ring when no fix stage ran (no OPENAI_API_KEY).
+  Each ring has its own SVG gradient id. (client/src/components/scan/scoreView.ts, ScoreRing.tsx, LiveScan.tsx)
+
+
+===================================================================================
+===================================================================================
+
+Module === Fixes
+
+Working and dynamic: issue list and fixes from the API, severity/status/principle filters, search, diff viewer,
+validation reason for rejected fixes, before/after score gauge, per-fix include checkbox.
+
+1. [High] "Open PR" cannot work yet.
+   POST /scans/{id}/ship returns 501 (same as Scan Now item 1), so the button ends in an error toast. Also, for a
+   website scan with a repo attached the fixes patch the rendered DOM, not source files: nothing maps a DOM element
+   to a repo file/line, so the "files changed" list in the confirm dialog is empty and a PR can't be built from them.
+   Only repo (source) scans have file + line. (server/app/routes_scans.py: ship, FixesPage.tsx)
+
+2. [High] Repo (source) scans never get the PR controls.
+   repoMode is `scan.mode === "repo"`, but a repo scan has mode "source". These are the scans whose fixes have a
+   real file and line, yet they show "Connect repo to ship" + "Copy patch" instead of "Open PR".
+   (client/src/components/fixes/FixesPage.tsx: repoMode)
+
+3. [Med] "Copy patch" is not a real patch.
+   It is "-"/"+" lines of the element's HTML (site scans) or of the line range, with a comment header; no file path
+   or line numbers a person could `git apply`. (client/src/components/fixes/model.ts: patchText)
+
+4. [Med] Rule names and links are a hardcoded map.
+   RULE_TITLES has 12 rules and SLUGS has 10 success criteria. Every other axe or AI-found rule shows its id
+   prettified with no description, and its "Understanding" link goes to the generic quickref. Could use axe's own
+   help text and the saved W3C rule documents. (client/src/lib/wcag.ts)
+
+5. [Med] Issues beyond the fix cap look like "no fix was proposed".
+   Only the worst FIX_MAX (30) issues get a fix, and AI-found page issues / html-body issues never do. The UI
+   doesn't say why. (server/app/fixer.py, FixesPage.tsx)
+
+6. [Low] The confidence meter shows the model's own guess (it said 100% for fixes axe rejected). The "Rule-based"
+   chip can never appear: every fix is LLM-made. Consider deriving confidence from the verification instead.
+
+7. [Low] Issues with no WCAG number ("n/a") fall into the "Robust" group because principleOf defaults to it.
+   (client/src/lib/wcag.ts: principleOf) Also the include/exclude choices are lost on reload.
+
+8. [Low] No way to regenerate a fix, edit the proposed patch, or re-run verification for one issue.
+
+Done:
+
+===================================================================================
+===================================================================================
+Module === Pull Requests
+
+Working and dynamic: nothing end to end. The page lists PRs from in-memory state only.
+
+1. [High] Nothing creates a pull request.
+   POST /scans/{id}/ship is a hardcoded 501 and server/app/github.py has no branch / commit / PR functions (the OAuth
+   scope "repo" is already requested, so the token could do it). (server/app/routes_scans.py, github.py)
+
+2. [High] The PR list is lost on reload.
+   It reads scanStore.pullRequests (browser memory). There is no PR table or list endpoint, and GET /scans/{id}
+   never returns `pr`. (client/src/state/scanStore.tsx, client/src/routes/pull-requests.tsx)
+
+3. [Med] PR cards show hardcoded labels and no real status.
+   The "accessibility" and "automated" chips are fixed text, not GitHub labels. Open / merged / closed state, checks
+   and review status are never fetched, and there is no webhook route (.env.example lists GITHUB_WEBHOOK_SECRET but no code reads it).
+   (client/src/components/fixes/PRCard.tsx)
+
+4. [Med] "May open PRs on this repo" is never enforced.
+   RepoSetting.enabled is stored by the GitHub page but nothing checks it before writing to a repo.
+
+5. [Low] Undefined: branch name, commit message and PR description (should include score before/after, the rules
+   fixed, screenshots).
+
+Done:
+
+===================================================================================
+===================================================================================
+Module === Scan History
+
+Working and dynamic: real list from GET /scans, URL search, status filter (done / in progress / failed), links to the
+live scan or the fixes, responsive table / cards.
+
+1. [Med] No trend.
+   The nav promises "how your accessibility score changed over time", but the page is a flat table: no chart, no
+   grouping by site, no change since the previous scan. (client/src/routes/history.tsx)
+
+2. [Med] No pagination or limits.
+   GET /scans returns every scan and the browser filters them. Sorting is fixed (newest first), no date filter.
+   (server/app/routes_scans.py: list_scans)
+
+3. [Med] No delete and no retention.
+   Scans, events, fixes and screenshots (up to a few hundred KB each, stored in SQLite) pile up forever; there is no
+   delete-scan button or clean-up.
+
+4. [Low] The list lacks useful columns: issue and fix counts, mode, engine, duration (the list API doesn't return
+   them). The Level column shows "AA" for repo scans where it doesn't apply.
+
+5. [Low] No "scan again" action on a row.
+
+Done:
+
+===================================================================================
+===================================================================================
+Module === Reports
+
+Working and dynamic: report per finished scan from real data (scores, validated / rejected / review counts, issues
+by severity, by WCAG principle, all findings), JSON download, print / save as PDF.
+
+1. [High] It is called "audit-ready" / "compliance" but is only an automated-test summary.
+   No methodology or limitations section (automated tools cover only part of WCAG), no conformance statement, no
+   tool and engine info, and no mapping to EAA / ADA / GIGW although the New Scan page lists them as covered.
+   (client/src/routes/reports.tsx, TrustStrip.tsx)
+
+2. [Med] The report leaves out data we already have.
+   Pages scanned, screenshots with boxes, the fix diffs and rejected reasons, the W3C rule each issue maps to, source
+   file and line, who found it (axe / AI), engine, scan error. Today it is just title + WCAG + status per issue.
+
+3. [Med] Limited scope and formats.
+   Only finished scans; no site-level or over-time report, no comparing two scans; no CSV and no server-made PDF
+   (browser print dialog only); `generated_at` comes from the browser clock.
+
+4. [Low] Rule names come from the hardcoded RULE_TITLES map (see Fixes item 4). Repo scans print
+   "WCAG 2.2 level AA" although the level isn't used for them.
+
+Done:
+
+===================================================================================
+===================================================================================
+Module === Sites
+
+Working and dynamic: list / add / remove sites on the server (real API, no mock), duplicate and URL validation,
+repo picker from the GitHub connection, "Scan this site" pre-fills the New Scan form.
+
+1. [Med] "Last scan: Not scanned yet" is hardcoded on every card.
+   Scans are not linked to sites (no site_id, no URL/host match), so a site you scanned ten times still says so, and
+   no latest score or trend is shown. (client/src/routes/sites.tsx: SiteCard, server/app/models.py)
+
+2. [Med] Nothing is monitored.
+   The nav says "sites and environments EquaLink monitors", but there are no scheduled or recurring scans, no
+   environments (staging / production) and no alert when the score drops.
+
+3. [Low] Sites can't be edited.
+   Only add and remove (no PATCH /sites/{id}): changing the linked repo or setting a default WCAG level / scope per
+   site needs delete + re-add. Duplicates are matched on the exact URL only (http vs https, www, trailing slash).
+
+4. [Low] No reachability check when adding a site, and "Scan this site" only pre-fills url + repo.
+
+Done:
+
+===================================================================================
+===================================================================================
+Module === Github
+
+Marked 100% done. Working and dynamic: OAuth connect / disconnect, repo list with pagination, per-repo enable switch,
+connection status, revoked-token detection. Optional hardening only:
+
+1. [Med] The access token is stored in plain text in SQLite (GithubConnection.access_token), and there is a single
+   global connection for the whole server (no per-user accounts, see Cross-cutting 1).
+
+2. [Low] OAuth scope "repo" gives full read/write to every private repo; a GitHub App would be least-privilege.
+   The per-repo "enabled" flag is not enforced (see Pull Requests 4).
+
+3. [Low] The Settings page still says GitHub is "not connected / arrives with the backend" (see Settings 1).
+
+Done:
+
+===================================================================================
+===================================================================================
+Module === CI/CD
+
+Working and dynamic: the workflow YAML generator (live preview, download, copy) and the form values, which are kept
+in the browser's localStorage. Nothing behind it exists yet.
+
+1. [High] The GitHub Action does not exist.
+   The workflow calls ./.github/actions/equalink, but the repo has no .github folder, so the generated workflow can't
+   run. The page itself says "has not been built yet". (client/src/routes/integrations.ci.tsx)
+
+2. [High] There is no server API for CI.
+   EQUALINK_API_KEY is not read anywhere (the API has no authentication or keys), the workflow has no input for the
+   server's address, and no endpoint returns pass / fail for "minimum score" or "fail on severity". PR comments and
+   "open a fix PR on failure" are not implemented either.
+
+3. [Med] Placeholder defaults and unescaped values.
+   The default URL is https://staging.example.com. Form values go into the YAML as-is, so a URL or branch containing
+   ": " or a line break produces a broken (or altered) workflow.
+
+4. [Low] Settings live only in this browser (not per repo or shared), and there is no way to see whether the
+   workflow ran, or a status badge.
+
+Done:
+
+
+===================================================================================
+===================================================================================
+Module === Settings
+
+Working and dynamic: everything on the page. Scan settings and the server's configuration come from the server;
+theme, reduce-motion and the API connection are kept in this browser.
+
+Nothing pending in this module.
+
+Done:
+- Hardcoded GitHub text replaced: the Server section shows the real state ("Connected as <account>" + Manage, or
+  "Not connected" + Connect, and whether sign-in is configured on the server). (client/src/routes/settings.tsx)
+- The page now configures scanning. New table `app_setting` + GET / PATCH / DELETE /settings (server/app/
+  app_settings.py, routes_settings.py). Saved in the database, they override server/.env for every scan started
+  afterwards: default WCAG level and scope (also prefill the New Scan form), pages per full-site scan, fixes per
+  scan, OpenAI model, minimum severity to report, rules to skip, and switches for AI review and AI fixes.
+  Values are validated server-side (readable 422 messages) and client-side; "Reset to server defaults" and null
+  in a PATCH restore the .env value. Rules to skip / minimum severity apply to axe, AI and repo-source findings.
+- The server's configuration is visible (Settings > Server, GET /settings, GET /health): which keys are set
+  (never the keys), scan engine, private addresses, screenshot height, repo-scan limits, W3C sync, and a clear
+  notice on the AI section when OPENAI_API_KEY is missing ("why no fixes?"). The scan log now also says when an
+  AI stage was skipped because it is turned off in Settings.
+- API base URL and demo-data mode can be changed from Settings > API connection (saved in this browser, page
+  reloads), instead of being build-time only. (client/src/lib/api.ts: connectionOverride)
+  Not covered: secrets and deployment settings (keys, ports, ALLOW_PRIVATE_TARGETS) stay in server/.env on
+  purpose; settings are global for the whole server (there are no users, see Cross-cutting 1).
+
+Module === Docs
+
+Working and dynamic: the Reference documents tab (documents in the database, W3C sync status and "Sync now", import,
+delete). The Guide and the API & setup tabs are static text, and parts are wrong:
+
+1. [High] The "Fix types" table describes fixers that do not exist.
+   "Vision LLM decides decorative vs informative", "Algorithmic: shift lightness until 4.5:1, hue preserved" and
+   "Template adapted to your framework" are not built. What exists: one OpenAI-proposed patch per axe issue, checked
+   by axe. (client/src/routes/docs.index.tsx: FIXERS)
+
+2. [High] The quick start promises things that aren't there.
+   "opens modals and tabs through the keyboard" is not done, and step 4 "Click Open PR" doesn't work yet.
+
+3. [Med] The API reference is incomplete and partly stale.
+   Missing: /scans/{id}/log, /scans/{id}/shots/{shot_id}, /sites, /integrations/github, /rule-docs/sync, /health.
+   It says GET /scans/{id} returns a PR (it doesn't) and omits shots and error; /ship is listed as working (501).
+   It is hand-written although FastAPI already publishes /docs and /openapi.json: link to or generate from those.
+   (client/src/routes/docs.api.tsx: ENDPOINTS)
+
+4. [Med] The environment table lists 6 of about 30 variables.
+   Missing: DATABASE_URL, FRONTEND_URL, STATE_SECRET, SERVER_URL, ALLOW_PRIVATE_TARGETS, MAX_SITE_PAGES,
+   OPENAI_MODEL, FIX_MAX, FIX_BATCH, SCREENSHOT_MAX_HEIGHT, SOURCE_MAX_FILES, SOURCE_LLM_MAX_FILES, GITHUB_TOKEN,
+   GITHUB_APP_*, W3C_SYNC_*, VITE_GITHUB_LIVE. The OPENAI_API_KEY line still says "repo scans (and fixes, later)";
+   it now also powers page review and fixes.
+
+5. [Low] The guide says nothing about screenshots, the full-site crawl, source scans, the score formula or how the
+   saved W3C rules are used. The Reference page says "once a month", but the interval is configurable
+   (W3C_SYNC_INTERVAL_DAYS), the first run must be started by hand, and it only repeats while the server is up
+   with a TINYFISH_API_KEY.
+
+Done:
+
+
+===================================================================================
+===================================================================================
+Module === Cross-cutting (all modules)
+
+1. [High] No authentication or users.
+   Anyone who can reach the API can list or delete scans, sites and reference documents and trigger paid TinyFish and
+   OpenAI runs (CORS only restricts browsers). One global GitHub connection for the whole server.
+
+2. [Med] No cost or concurrency limits.
+   Every scan can call OpenAI (review + fixes) and TinyFish; there is no per-scan cost or token report, no queue and
+   no limit on parallel scans (each is an in-process asyncio task, so a server restart fails the running ones).
+
+3. [Med] No real migrations: schema changes are hand-written ALTER TABLEs in server/app/db.py on SQLite.
+
+4. [Low] The /_design showcase page is reachable in production builds too (only its MockDebugPanel is dev-only).
+
+
+Done:
+- Mock (demo) data is now opt-in: VITE_USE_MOCKS must be exactly "true" (client/src/lib/api.ts, from main), and the
+  Settings > API connection override keeps that default.
+
+Github - 100% Done
+Presentation - 
+Video Recording -
+Project Host -
+Project Submission - 

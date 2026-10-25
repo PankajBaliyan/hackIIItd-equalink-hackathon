@@ -31,8 +31,8 @@ function Page() {
     <div className="mx-auto max-w-5xl space-y-12">
       <section className="space-y-6 pt-4 text-center">
         <FocusHeading className="text-4xl font-semibold outline-none">
-          Don&apos;t just find accessibility bugs.{" "}
-          <span className="text-brand-gradient">Ship the fix.</span>
+          Don&apos;t just find accessibility bugs.
+          <span className="block text-brand-gradient">Ship the fix.</span>
         </FocusHeading>
         <p className="mx-auto max-w-2xl text-lg text-muted">
           EquaLink scans your site, fixes what it finds, proves each fix with a rules engine, and

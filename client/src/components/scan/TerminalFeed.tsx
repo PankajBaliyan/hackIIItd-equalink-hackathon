@@ -1,5 +1,6 @@
 import {
   ArrowDown,
+  Camera,
   Check,
   Copy,
   CircleSlash,
@@ -20,6 +21,7 @@ const META: Record<ScanEvent["type"], { Icon: LucideIcon; cls: string; label: st
   fix: { Icon: Pencil, cls: "text-minor", label: "Fix proposed" },
   validated: { Icon: Check, cls: "text-success", label: "Validated" },
   rejected: { Icon: CircleSlash, cls: "text-moderate", label: "Rejected" },
+  shot: { Icon: Camera, cls: "text-muted", label: "Screenshot" },
 };
 const GLYPH = /^[▸✗✎✓⊘]\s*/;
 
@@ -27,7 +29,14 @@ const GLYPH = /^[▸✗✎✓⊘]\s*/;
  * a11y: role=log, focusable and scrollable. Live announcements are throttled through a separate
  * polite status region (one summary every few seconds) so the stream doesn't flood screen readers.
  */
-export function TerminalFeed({ events }: { events: ScanEvent[] }) {
+export function TerminalFeed({
+  events,
+  finished = false,
+}: {
+  events: ScanEvent[];
+  /** The scan is over, so an empty log means nothing was recorded rather than that the agent is starting. */
+  finished?: boolean;
+}) {
   const ref = useRef<HTMLDivElement>(null);
   const [pinned, setPinned] = useState(true);
   const [copied, setCopied] = useState(false);
@@ -82,9 +91,13 @@ export function TerminalFeed({ events }: { events: ScanEvent[] }) {
           aria-label="Scan event log"
           tabIndex={0}
           onScroll={onScroll}
-          className="h-72 overflow-auto rounded-card border bg-bg p-3 font-mono text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="relative h-72 overflow-auto overscroll-contain rounded-card border bg-bg p-3 font-mono text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
-          {events.length === 0 && <p className="text-muted">Waiting for the agent…</p>}
+          {events.length === 0 && (
+            <p className="text-muted">
+              {finished ? "No log was recorded for this scan." : "Waiting for the agent…"}
+            </p>
+          )}
           <ul className="space-y-1">
             {events.map((e, i) => {
               const { Icon, cls, label } = META[e.type];

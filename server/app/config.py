@@ -1,5 +1,5 @@
 from functools import lru_cache
-from pathlib import Path
+from typing import Literal
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -15,7 +15,32 @@ class Settings(BaseSettings):
 
     # Scans fetch URLs the user supplies. Allow localhost/private targets for local dev; set false when deployed.
     allow_private_targets: bool = True
-    max_site_pages: int = 5
+    max_site_pages: int = 20
+    # What a scan form starts with. Editable in the dashboard (Settings), which overrides these.
+    default_level: Literal["A", "AA", "AAA"] = "AA"
+    default_scope: Literal["page", "site"] = "page"
+    # Only issues at or above this severity are recorded, and rules listed here (comma separated) are skipped.
+    min_severity: Literal["minor", "moderate", "serious", "critical"] = "minor"
+    disabled_rules: str = ""
+    # Switches for the two OpenAI stages, which need OPENAI_API_KEY and cost money per scan.
+    ai_review: bool = True
+    ai_fixes: bool = True
+    # Page screenshots are capped to this many CSS pixels of height (very long pages are cut off at the bottom).
+    screenshot_max_height: int = 4000
+
+    # Where scans render pages: "auto" uses a TinyFish remote browser for public URLs when TINYFISH_API_KEY is set
+    # and local Chromium otherwise (TinyFish can't reach localhost); "tinyfish" and "local" force one.
+    scan_engine: Literal["auto", "tinyfish", "local"] = "auto"
+
+    # Repo (source code) scans. The static checks always run; the model review pass needs OPENAI_API_KEY.
+    source_max_files: int = 150
+    source_max_file_bytes: int = 150_000
+    source_llm_max_files: int = 40
+    openai_api_key: str = ""
+    openai_model: str = "gpt-4.1"
+    # Fix stage: how many issues get a proposed fix per scan (worst first) and how many go to the model per request.
+    fix_max: int = 30
+    fix_batch: int = 8
 
     # W3C rules sync: a TinyFish agent fetches the latest W3C accessibility rules into the reference docs.
     tinyfish_api_key: str = ""
@@ -26,25 +51,6 @@ class Settings(BaseSettings):
 
     github_client_id: str = ""
     github_client_secret: str = ""
-    github_token: str = ""
-    github_app_id: str = ""
-    github_app_slug: str = ""
-    github_app_private_key: str = ""
-    github_app_private_key_path: str = ""
-    github_webhook_secret: str = ""
-
-    @property
-    def app_private_key(self) -> str:
-        """PEM contents from the env var (\\n escapes allowed) or from the key file."""
-        if self.github_app_private_key:
-            return self.github_app_private_key.replace("\\n", "\n")
-        if self.github_app_private_key_path:
-            return Path(self.github_app_private_key_path).expanduser().read_text()
-        return ""
-
-    @property
-    def app_configured(self) -> bool:
-        return bool(self.github_app_id and self.github_app_slug and self.app_private_key)
 
     @property
     def oauth_configured(self) -> bool:
@@ -56,12 +62,8 @@ class Settings(BaseSettings):
 
     @property
     def github_mode(self) -> str:
-        """'app' (production), 'oauth' ("Sign in with GitHub"), 'pat' (dev token), or 'none'."""
-        if self.app_configured:
-            return "app"
-        if self.oauth_configured:
-            return "oauth"
-        return "pat" if self.github_token else "none"
+        """'oauth' ("Sign in with GitHub") or 'none'."""
+        return "oauth" if self.oauth_configured else "none"
 
 
 @lru_cache

@@ -15,7 +15,7 @@ def make_settings(**kw) -> Settings:
 
 @pytest.fixture
 def client(monkeypatch, tmp_path):
-    cfg = {"settings": make_settings(github_token="ghp_test")}
+    cfg = {"settings": make_settings(github_client_id="cid", github_client_secret="sec")}
     monkeypatch.setattr(db, "_engine", None)
     monkeypatch.setattr(cfg["settings"], "database_url", f"sqlite:///{tmp_path}/t.db")
     app.dependency_overrides[get_settings] = lambda: cfg["settings"]
@@ -37,13 +37,23 @@ def client(monkeypatch, tmp_path):
     SQLModel.metadata.clear  # tables are per-file db, nothing to reset
 
 
+def connect_user(client, monkeypatch):
+    async def fake_exchange(s, code):
+        return "gho_test"
+
+    monkeypatch.setattr(github, "exchange_code", fake_exchange)
+    state = client.post("/integrations/github/connect").json()["install_url"].split("state=")[1]
+    client.get("/integrations/github/oauth/callback", params={"code": "abc", "state": state})
+
+
 def test_starts_disconnected(client):
     r = client.get("/integrations/github").json()
-    assert r["connected"] is False and r["mode"] == "pat"
+    assert r["connected"] is False and r["mode"] == "oauth"
 
 
-def test_connect_lists_repos_sorted_and_toggle_persists(client):
-    r = client.post("/integrations/github/connect").json()
+def test_connect_lists_repos_sorted_and_toggle_persists(client, monkeypatch):
+    connect_user(client, monkeypatch)
+    r = client.get("/integrations/github").json()
     assert r["connected"] and r["account"] == "octocat"
     assert [x["full_name"] for x in r["repos"]] == ["octocat/Alpha", "octocat/zeta"]
     assert not any(x["enabled"] for x in r["repos"])
@@ -54,8 +64,8 @@ def test_connect_lists_repos_sorted_and_toggle_persists(client):
     assert {x["full_name"]: x["enabled"] for x in again["repos"]}["octocat/zeta"] is True
 
 
-def test_cannot_enable_unknown_repo(client):
-    client.post("/integrations/github/connect")
+def test_cannot_enable_unknown_repo(client, monkeypatch):
+    connect_user(client, monkeypatch)
     r = client.patch("/integrations/github/repos", json={"full_name": "evil/repo", "enabled": True})
     assert r.status_code == 404
 
@@ -65,8 +75,8 @@ def test_patch_requires_connection(client):
     assert r.status_code == 409
 
 
-def test_disconnect_clears(client):
-    client.post("/integrations/github/connect")
+def test_disconnect_clears(client, monkeypatch):
+    connect_user(client, monkeypatch)
     client.patch("/integrations/github/repos", json={"full_name": "octocat/zeta", "enabled": True})
     assert client.delete("/integrations/github").json()["connected"] is False
     assert client.get("/integrations/github").json()["connected"] is False
@@ -79,30 +89,6 @@ def test_connect_without_config_is_400(client):
     assert r.status_code == 400 and "isn't configured" in r.json()["detail"]
 
 
-def test_pasted_token_connects_and_is_never_returned(client):
-    client.cfg["settings"] = make_settings()
-    app.dependency_overrides[get_settings] = lambda: client.cfg["settings"]
-    token = "github_pat_test_value_123456789"
-    r = client.post("/integrations/github/token", json={"token": token})
-    assert r.status_code == 200
-    body = r.json()
-    assert body["connected"] and body["account"] == "octocat" and body["mode"] == "pat"
-    assert token not in r.text
-    assert client.get("/integrations/github").json()["connected"] is True
-
-
-def test_stale_pat_returns_token_form_instead_of_409(client):
-    client.post("/integrations/github/connect")
-    client.cfg["settings"] = make_settings()
-    app.dependency_overrides[get_settings] = lambda: client.cfg["settings"]
-    r = client.get("/integrations/github")
-    assert r.status_code == 200
-    assert r.json()["connected"] is False and r.json()["mode"] == "none"
-
-
-def test_callback_rejects_bad_state(client):
-    r = client.get("/integrations/github/callback", params={"installation_id": 1, "state": "nope"})
-    assert r.status_code == 400
 
 
 async def test_github_client_surfaces_api_errors(monkeypatch):
@@ -171,8 +157,8 @@ async def test_exchange_code_errors(monkeypatch):
     assert "incorrect" in e.value.message
 
 
-def _enable(client, repo="octocat/zeta"):
-    client.post("/integrations/github/connect")
+def _enable(client, monkeypatch, repo="octocat/zeta"):
+    connect_user(client, monkeypatch)  # sign in through the OAuth flow, then switch the repository on
     client.patch("/integrations/github/repos", json={"full_name": repo, "enabled": True})
 
 
@@ -199,7 +185,7 @@ def test_pull_request_list_branches_and_create(client, monkeypatch):
 
     # a repository must be switched on first
     assert client.get("/integrations/github/branches", params={"repo": "octocat/zeta"}).status_code in (403, 409)
-    _enable(client)
+    _enable(client, monkeypatch)
     assert client.get("/integrations/github/pulls").json()[0]["number"] == 7
     assert client.get("/integrations/github/branches", params={"repo": "octocat/zeta"}).json() == {
         "default": "main", "branches": ["main", "fix"],

@@ -42,8 +42,8 @@ site tracking, and the Fixes review and shipping workflow. See `server/README.md
 | Live progress | Server-Sent Events (`/scans/{id}/events`) |
 | Web ops | TinyFish Fetch / Agent / Search APIs |
 | Rules engine | `axe-core` in headless Chromium via Playwright |
-| LLM | Claude with structured JSON output, vision for alt text |
-| Ship | GitHub App via `PyGithub` (PAT fallback for dev) |
+| LLM | OpenAI (GPT-4.1) with structured JSON output |
+| Ship | GitHub OAuth App |
 | Deploy | Vercel (frontend), Render with Docker (backend) |
 
 ## Dashboard (3 screens)
@@ -98,17 +98,18 @@ set `VITE_USE_MOCKS=true` only for the browser-only scan demo. URL crawling and
 automatic fix generation remain separate planned pipeline components.
 
 Additional variables the finished scan pipeline will need:
+Environment variables the backend needs:
 
 | Variable | Purpose |
 |---|---|
-| `TINYFISH_API_KEY` | TinyFish Fetch / Agent / Search |
-| `ANTHROPIC_API_KEY` | Claude for diagnosis and fixes |
-| `GITHUB_APP_ID` | GitHub App identity |
-| `GITHUB_APP_PRIVATE_KEY` | GitHub App signing key |
-| `GITHUB_WEBHOOK_SECRET` | Webhook verification |
-| `DEMO_MODE` | `replay` serves recorded TinyFish responses as a demo fallback |
+| `GITHUB_CLIENT_ID` | GitHub OAuth App Client ID |
+| `GITHUB_CLIENT_SECRET` | GitHub OAuth App Client Secret |
+| `STATE_SECRET` | Secret used to sign OAuth state tokens (CSRF protection) |
+| `TINYFISH_API_KEY` | TinyFish remote browser for scans and W3C rules sync |
+| `OPENAI_API_KEY` | OpenAI for diagnosis and code review |
+| `SCAN_ENGINE` | Browser engine: `auto` (default), `tinyfish`, or `local` |
 
-Never commit secrets. `.env` files and `*.pem` keys are git-ignored.
+Never commit secrets. `.env` files are git-ignored.
 
 ## Accessibility
 

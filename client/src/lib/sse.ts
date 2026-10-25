@@ -19,6 +19,8 @@ export function openEventStream(opts: StreamOptions): () => void {
   let timer: ReturnType<typeof setTimeout> | undefined;
   let retries = 0;
   let closed = false;
+  // A fresh EventSource sends no Last-Event-ID, so remember where we got to and ask for the rest explicitly.
+  let lastId = "";
 
   const finish = () => {
     closed = true;
@@ -50,12 +52,13 @@ export function openEventStream(opts: StreamOptions): () => void {
   const connect = () => {
     if (closed) return;
     onConnection?.(retries === 0 ? "connecting" : "reconnecting");
-    es = new EventSource(url);
+    es = new EventSource(lastId ? `${url}${url.includes("?") ? "&" : "?"}after=${lastId}` : url);
     es.onopen = () => {
       retries = 0;
       onConnection?.("live");
     };
     es.onmessage = (m) => {
+      if (m.lastEventId) lastId = m.lastEventId;
       try {
         emit(JSON.parse(m.data) as ScanEvent);
       } catch {

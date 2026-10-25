@@ -12,6 +12,7 @@ from app.db import fail_orphaned_scans, init_db
 from app.routes_github import router as github_router
 from app.routes_rule_docs import router as rule_docs_router
 from app.routes_scans import router as scans_router
+from app.routes_settings import router as settings_router
 from app.routes_sites import router as sites_router
 
 
@@ -50,6 +51,7 @@ app.include_router(github_router)
 app.include_router(sites_router)
 app.include_router(rule_docs_router)
 app.include_router(scans_router)
+app.include_router(settings_router)
 
 # The Fixes workflow is isolated as a sub-application. Routers above take
 # precedence for shared paths such as /integrations/github and /health.
@@ -58,9 +60,15 @@ try:
 except ImportError:  # Imported as server.app.main from the repository root.
     from server.fixes.main import app as fixes_app
 
+
 @app.get("/health")
 def health():
-    return {"ok": True, "github_mode": get_settings().github_mode}
+    s = get_settings()
+    return {
+        "ok": True, "github_mode": s.github_mode, "openai": bool(s.openai_api_key),
+        "tinyfish": bool(s.tinyfish_api_key), "scan_engine": s.scan_engine,
+    }
 
 
+# Mounted last so every router above (and /health, /settings) wins; anything else goes to the Fixes service.
 app.mount("/", fixes_app)

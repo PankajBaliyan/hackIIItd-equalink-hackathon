@@ -20,6 +20,7 @@ import type {
   Scan,
   ScanEvent,
   ScanDetail,
+  Shot,
   Severity,
 } from "@/lib/types";
 
@@ -27,6 +28,7 @@ export interface ScanState {
   scan: Scan | null;
   issues: Issue[];
   fixes: Fix[];
+  shots: Shot[];
   events: ScanEvent[];
   counters: Record<Severity, number>;
   pr: PullRequest | null;
@@ -43,6 +45,7 @@ type Action =
   | { type: "scan"; scan: Scan }
   | ({ type: "detail" } & ScanDetail)
   | { type: "event"; event: ScanEvent }
+  | { type: "log"; events: ScanEvent[] }
   | { type: "connection"; connection: ConnectionState }
   | { type: "pr"; pr: PullRequest }
   | { type: "error"; error: string };
@@ -51,6 +54,7 @@ const initial: ScanState = {
   scan: null,
   issues: [],
   fixes: [],
+  shots: [],
   events: [],
   counters: emptyCounters(),
   pr: null,
@@ -73,6 +77,7 @@ function reducer(state: ScanState, a: Action): ScanState {
         scan: a.scan,
         issues: a.issues,
         fixes: a.fixes,
+        shots: a.shots ?? [],
         pr: a.pr ?? null,
         summary: a.summary ?? null,
         screenshot: a.screenshot ?? null,
@@ -92,6 +97,8 @@ function reducer(state: ScanState, a: Action): ScanState {
         scan: state.scan ? { ...state.scan, status: e.stage } : state.scan,
       };
     }
+    case "log":
+      return { ...state, events: a.events };
     case "connection":
       return { ...state, connection: a.connection };
     case "pr":
@@ -132,7 +139,13 @@ export function ScanStoreProvider({ children }: { children: ReactNode }) {
         if (activeId.current !== id) return;
         dispatch({ type: "event", event });
         // Pull full issue/fix data as soon as each stage that produces it completes.
-        if (event.stage === "done" || event.stage === "fixing" || event.stage === "verifying") {
+        if (
+          event.type === "shot" ||
+          event.stage === "done" ||
+          event.stage === "failed" ||
+          event.stage === "fixing" ||
+          event.stage === "verifying"
+        ) {
           void api
             .getScan(id)
             .then((d) => {
@@ -171,7 +184,14 @@ export function ScanStoreProvider({ children }: { children: ReactNode }) {
         .then((d) => {
           if (activeId.current !== id) return;
           dispatch({ type: "detail", ...d });
-          if (d.scan.status !== "done" && d.scan.status !== "failed") void stream(id);
+          if (d.scan.status !== "done" && d.scan.status !== "failed") return stream(id);
+          // Already finished: nothing will stream, so load the stored log instead.
+          return getApi()
+            .then((api) => api.getEvents(id))
+            .then((events) => {
+              if (activeId.current === id) dispatch({ type: "log", events });
+            })
+            .catch(() => undefined); // the scan still renders without its log
         })
         .catch((e: unknown) => {
           if (activeId.current !== id) return;

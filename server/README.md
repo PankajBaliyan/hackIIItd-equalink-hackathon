@@ -19,27 +19,16 @@ uv run uvicorn main:app --host 127.0.0.1 --port 8000 --reload
 In `client/.env` keep `VITE_API_BASE_URL=http://localhost:8000`,
 `VITE_USE_MOCKS=false`, and `VITE_GITHUB_LIVE=true`.
 
-## Connect GitHub (pick one mode in `server/.env`)
+## Connect GitHub in `server/.env`
 
-**OAuth, "Sign in with GitHub".** At github.com/settings/developers create a **New OAuth App** with Homepage URL `http://localhost:5173` and Authorization callback URL `http://localhost:8000/integrations/github/oauth/callback`. Put its Client ID and a generated Client secret in `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET`, then restart the server.
-
-**Personal access token (easiest locally).** Open **GitHub** in the dashboard, click
-**Open GitHub token page**, create a fine-grained token with Contents and Pull
-requests read/write, paste it into the form, and connect. The token is submitted
-directly to FastAPI and is never saved in browser storage or returned by the API.
-
-**GitHub App (production).** Create an app at github.com/settings/apps with Contents (RW), Pull requests (RW) and Metadata (R). Set its **Setup URL** to `http://localhost:8000/integrations/github/callback`, then fill `GITHUB_APP_ID`, `GITHUB_APP_SLUG`, `GITHUB_APP_PRIVATE_KEY` (or `_PATH`) and `STATE_SECRET`. Connect sends you to github.com to install the app, then back to the dashboard.
-
-Priority if several are set: App, then OAuth, then token. Secrets live only in `.env`, which is git-ignored.
+**OAuth, "Sign in with GitHub".** At github.com/settings/developers create a **New OAuth App** with Homepage URL `http://localhost:5173` and Authorization callback URL `http://localhost:8000/integrations/github/oauth/callback`. Put its Client ID and Client secret in `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET`, then restart the server. The dashboard button becomes **Sign in with GitHub** and sends you to github.com. The user token (scope `repo`) is stored server-side in SQLite.
 
 ## Endpoints
 
 | Method | Route | Purpose |
 |---|---|---|
 | GET | `/integrations/github` | Connection status and live repo list |
-| POST | `/integrations/github/connect` | Server token: connect. OAuth/App: return `install_url` |
-| POST | `/integrations/github/token` | Validate and store a token pasted in the dashboard |
-| GET | `/integrations/github/callback` | App install redirect target |
+| POST | `/integrations/github/connect` | Returns OAuth `install_url` to redirect to |
 | GET | `/integrations/github/oauth/callback` | OAuth redirect target |
 | PATCH | `/integrations/github/repos` | Enable or disable PRs on a repo |
 | DELETE | `/integrations/github` | Disconnect and clear settings |
@@ -60,8 +49,8 @@ Priority if several are set: App, then OAuth, then token. Secrets live only in `
 
 ## Limits
 
-- A scan renders each page in headless Chromium and runs axe-core, then scores it (100 minus weighted issues). It does **not** yet call TinyFish, run the LLM fixer or re-verify, so scans end with issues awaiting human review and no fixes. axe-core cannot see everything: for example a `div` with `onclick` or a placeholder-only input is not flagged, which is what the planned LLM checks are for.
-- `scope: site` follows up to `MAX_SITE_PAGES` same-origin links from the first page.
+- A scan renders each page in a browser and runs axe-core on it, then scores it (100 minus weighted issues). With `TINYFISH_API_KEY` set, public URLs are rendered in a **TinyFish remote browser** (Browser API over CDP); `localhost` and private addresses use local Chromium because TinyFish cannot reach them. `SCAN_ENGINE` (`auto` default, `tinyfish`, `local`) overrides this, and the scan's `engine` field says which one ran. If TinyFish can't start a browser, or a site answers it with a bot-protection page (for example Cloudflare's "Just a moment…"), `auto` retries with local Chromium; a forced `tinyfish` scan fails instead. A blocked page is never scored. TinyFish sessions cost $0.002 per minute and are always ended when the scan finishes. The scan does **not** yet run the LLM fixer or re-verify, so scans end with issues awaiting human review. axe-core cannot see everything: for example a `div` with `onclick` or a placeholder-only input is not flagged, which is what the planned LLM checks are for.
+- `scope: site` crawls the site breadth-first: it follows same-origin links on every page it scans, up to `MAX_SITE_PAGES` pages (default 20). A page that fails to load is skipped; pages beyond the limit are reported in the scan log.
 - `ALLOW_PRIVATE_TARGETS=true` lets scans hit localhost and private addresses. Turn it off when deployed.
 - One connection for the whole server: there is no user login yet.
 - GitHub tokens are stored server-side in PostgreSQL. Add application-level secret encryption before a public deployment.
@@ -78,3 +67,14 @@ Priority if several are set: App, then OAuth, then token. Secrets live only in `
 - The first run is started by a person. After a successful run the server repeats it every `W3C_SYNC_INTERVAL_DAYS` (default 30) while it is up; set `W3C_SYNC_SCHEDULE=false` to disable that. A failed run is retried after a day.
 - **No duplicates:** a returned rule is stored only if no existing doc has the same WCAG success criterion (for example `1.4.3`) or the same normalized title. Stored rules are also listed in the agent's goal so it can skip them. A run that finds nothing new is a success.
 - The agent prompt lives in `app/prompts/w3c_rules.md`. Each run uses TinyFish credits.
+
+
+## Repo (source code) scans
+
+`POST /scans` with `{"target": "repo", "repo": "owner/repo"}` scans the repository's code instead of a rendered page (the **GitHub repo** option on New Scan).
+
+- It reads the repo with the connected GitHub account (public repos work without one) and checks `.html`, `.jsx`, `.tsx`, `.vue`, `.svelte` and `.astro` files. `node_modules`, build output, tests and stories are skipped, up to `SOURCE_MAX_FILES` files, app folders (`src`, `app`, `pages`, `components`, ...) first.
+- **Static checks** (always on, in `app/source_rules.py`): missing `alt`, unlabeled inputs, empty buttons and links, click handlers on non-interactive elements, missing `lang`, frames without a title, videos without captions, positive `tabindex`, and viewports that block zoom. They only fire when the markup alone proves the problem; a `{...props}` spread skips the tag.
+- **OpenAI review** (optional, needs `OPENAI_API_KEY`): the first `SOURCE_LLM_MAX_FILES` files go to the model with your saved W3C rules as reference, to find what static rules can't (heading order, focus management, ARIA misuse, error text, contrast of hard-coded colors). Each reported issue is checked against the files that were sent, and a failure or refusal never fails the scan.
+- Every issue has `source_file`, `source_line` and a `detector` (`static` or `claude`), and links to that line on GitHub. Saved W3C rules are attached by success criterion as in rendered scans.
+- It does not render anything, so it can't measure computed color contrast, and it only sees markup that is in the files (not what a framework generates at runtime).

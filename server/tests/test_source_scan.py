@@ -1,0 +1,373 @@
+"""Repo (source code) scans against a fake GitHub API and a fake Claude client."""
+
+import asyncio
+import json
+import re
+from types import SimpleNamespace
+
+import openai
+import httpx
+import pytest
+from sqlmodel import Session, select
+
+import app.db as db
+from app import pipeline, routes_scans, source_llm, source_scan
+from app.config import Settings
+from app.models import EventRow, RuleDoc, Scan
+
+FORM = '''import React from "react";
+export function Form() {
+  return (
+    <form>
+      <input type="text" placeholder="Email" />
+      <img src="/logo.png" />
+      <div onClick={go}>Next</div>
+    </form>
+  );
+}
+'''
+CLEAN = 'export const A = () => <main><h1>Hi</h1><button>Save</button></main>;\n'
+REPO = {
+    "src/Form.tsx": FORM,
+    "src/Clean.tsx": CLEAN,
+    "public/index.html": '<!doctype html>\n<html>\n<body><a href="/x"></a></body>\n</html>\n',
+    "node_modules/pkg/bad.html": "<img src=x>",  # skipped
+    "README.md": "<img src=x>",  # not a source file
+    "src/Form.test.tsx": "<img src=x>",  # skipped
+}
+
+
+def github(files: dict[str, str] = REPO, *, found: bool = True):
+    seen: list[str] = []
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        path = req.url.path
+        seen.append(path)
+        if not found:
+            return httpx.Response(404, json={"message": "Not Found"})
+        if path == "/repos/o/r":
+            return httpx.Response(200, json={"default_branch": "main"})
+        if path == "/repos/o/r/git/trees/main":
+            tree = [{"path": p, "type": "blob", "size": len(t)} for p, t in files.items()]
+            return httpx.Response(200, json={"tree": tree + [{"path": "src", "type": "tree"}], "truncated": False})
+        if path.startswith("/repos/o/r/contents/"):
+            name = path.removeprefix("/repos/o/r/contents/")
+            assert req.headers["accept"] == "application/vnd.github.raw+json"
+            return httpx.Response(200, text=files[name])
+        return httpx.Response(404, json={"message": "Not Found"})
+
+    return httpx.MockTransport(handler), seen
+
+
+@pytest.fixture
+def env(monkeypatch, tmp_path):
+    state = {"cfg": Settings(_env_file=None, state_secret="x" * 32, database_url=f"sqlite:///{tmp_path}/s.db")}
+    monkeypatch.setattr(db, "_engine", None)
+    monkeypatch.setattr("app.db.get_settings", lambda: state["cfg"])
+    monkeypatch.setattr(pipeline, "get_settings", lambda: state["cfg"])
+    db.init_db()
+    state["patch"] = monkeypatch
+    return state
+
+
+def run(env, transport) -> tuple[Scan, list[dict], list[str]]:
+    env["patch"].setattr(source_scan, "_transport", transport)
+    with Session(db.engine()) as s:
+        s.add(Scan(id="scan_s", url="https://github.com/o/r", mode="source", level="AA", scope="page", repo="o/r", engine="source"))
+        s.commit()
+    asyncio.run(pipeline.run_scan("scan_s"))
+    with Session(db.engine()) as s:
+        scan = s.get(Scan, "scan_s")
+        issues = asyncio.run(routes_scans.get_scan("scan_s", s))["issues"]
+        events = [json.loads(e.payload)["message"] for e in s.exec(select(EventRow).order_by(EventRow.id)).all()]
+    return scan, issues, events
+
+
+def test_static_scan_finds_issues_with_file_and_line(env):
+    scan, issues, events = run(env, github()[0])
+    assert scan.status == "done" and scan.engine == "source"
+    found = {(i["source_file"], i["source_line"], i["rule_id"]) for i in issues}
+    assert found == {
+        ("src/Form.tsx", 5, "label"),
+        ("src/Form.tsx", 6, "image-alt"),
+        ("src/Form.tsx", 7, "click-events-have-key-events"),
+        ("public/index.html", 2, "html-has-lang"),
+        ("public/index.html", 3, "link-name"),
+    }
+    assert all(i["detector"] == "static" for i in issues)
+    alt = next(i for i in issues if i["rule_id"] == "image-alt")
+    assert alt["page_url"] == "https://github.com/o/r/blob/main/src/Form.tsx#L6"
+    assert alt["wcag_sc"] == "1.1.1" and alt["impact"] == "critical" and alt["html"] == '<img src="/logo.png" />'
+    assert "found 3 source file(s) to check" in events  # Form, Clean, index.html; not node_modules, README or tests
+    assert any("set OPENAI_API_KEY" in e for e in events)
+    assert scan.score_before == pipeline.score({"critical": 2, "serious": 3, "moderate": 0, "minor": 0})
+
+
+def test_saved_w3c_rule_is_attached_by_success_criterion(env):
+    with Session(db.engine()) as s:
+        s.add(RuleDoc(title="Provide Text Alternatives", content="Requirement: Images need alt text. WCAG reference: Success Criterion 1.1.1, Non-text Content."))
+        s.commit()
+    _, issues, events = run(env, github()[0])
+    assert next(i for i in issues if i["rule_id"] == "image-alt")["rule"]["title"] == "Provide Text Alternatives"
+    assert next(i for i in issues if i["rule_id"] == "label")["rule"] is None
+    assert "using 1 saved W3C rule(s) as reference" in events
+
+
+def test_file_cap_is_reported_and_app_code_comes_first(env):
+    env["cfg"] = Settings(_env_file=None, source_max_files=2, database_url=env["cfg"].database_url)
+    files = {"zzz/a.html": "<img src=x>", "src/Form.tsx": FORM, "src/Clean.tsx": CLEAN}
+    _, issues, events = run(env, github(files)[0])
+    assert {i["source_file"] for i in issues} == {"src/Form.tsx"}  # src/ files won the two slots
+    assert any("1 more skipped (limit 2)" in e for e in events)
+
+
+def test_unreadable_repo_fails_with_a_helpful_message(env):
+    scan, issues, _ = run(env, github(found=False)[0])
+    assert scan.status == "failed" and not issues
+    assert "Couldn't read o/r" in scan.error and "connect GitHub" in scan.error
+
+
+def test_repo_without_source_files_fails_clearly(env):
+    scan, _, _ = run(env, github({"README.md": "hi", "a.py": "x"})[0])
+    assert scan.status == "failed" and "No HTML, JSX" in scan.error
+
+
+# --- Claude review -------------------------------------------------------------------------------
+
+
+class FakeClaude:
+    def __init__(self, answer=None, *, refusal=None, error=None, fixes=()):
+        self.calls, self.answer, self.refusal, self.error, self.fixes = [], answer, refusal, error, fixes
+        self.chat = SimpleNamespace(completions=SimpleNamespace(create=self.create))
+
+    def fixes_for(self, prompt):
+        """The configured fixes (keyed by rule name) for the issues named in a fix prompt, with real issue ids."""
+        ids = {rule: iid for iid, rule in re.findall(r"issue_id: (iss_\w+) \| line \d+ \| ([\w-]+)", prompt)}
+        return [{**f, "issue_id": ids[f["issue_id"]]} for f in self.fixes if f["issue_id"] in ids]
+
+    async def create(self, **kw):
+        self.calls.append(kw)
+        if self.error:
+            raise self.error
+        if kw["response_format"]["json_schema"]["name"] == "fixes":  # the fix stage: no proposals unless a test sets them
+            return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=json.dumps({"fixes": self.fixes_for(kw["messages"][1]["content"])}), refusal=None), finish_reason="stop")])
+        text = self.answer if isinstance(self.answer, str) else json.dumps(self.answer)
+        msg = SimpleNamespace(content=text, refusal=self.refusal)
+        return SimpleNamespace(choices=[SimpleNamespace(message=msg, finish_reason="stop")])
+
+
+def with_claude(env, fake):
+    env["cfg"] = Settings(_env_file=None, openai_api_key="k", database_url=env["cfg"].database_url)
+    env["patch"].setattr(source_llm, "make_client", lambda _s: fake)
+
+
+ANSWER = {"issues": [
+    {"file": "src/Form.tsx", "line": 4, "rule_id": "missing-form-error-text", "wcag_sc": "3.3.1", "impact": "serious", "problem": "Errors are not described in text."},
+    {"file": "src/Form.tsx", "line": 99, "rule_id": "bogus-line", "wcag_sc": "1.1.1", "impact": "minor", "problem": "x"},
+    {"file": "src/Nope.tsx", "line": 1, "rule_id": "bogus-file", "wcag_sc": "1.1.1", "impact": "minor", "problem": "x"},
+    {"file": "src/Form.tsx", "line": 5, "rule_id": "bad-sc", "wcag_sc": "one", "impact": "minor", "problem": "x"},
+    {"file": "src/Form.tsx", "line": 5, "rule_id": "bad-impact", "wcag_sc": "1.3.5", "impact": "huge", "problem": "x"},
+]}
+
+
+def test_claude_review_adds_validated_issues_and_uses_the_saved_rules(env):
+    with Session(db.engine()) as s:
+        s.add(RuleDoc(title="Identify Errors", content="Requirement: Describe errors in text. WCAG reference: Success Criterion 3.3.1, Error Identification."))
+        s.commit()
+    fake = FakeClaude(ANSWER)
+    with_claude(env, fake)
+    scan, issues, events = run(env, github()[0])
+    assert scan.status == "done", scan.error
+    claude = [i for i in issues if i["detector"] == "llm"]
+    assert [(i["source_file"], i["source_line"], i["rule_id"], i["wcag_sc"]) for i in claude] == [("src/Form.tsx", 4, "missing-form-error-text", "3.3.1")]
+    assert claude[0]["context"] == "Errors are not described in text." and claude[0]["rule"]["title"] == "Identify Errors"
+    assert any("dropped 4 OpenAI finding(s)" in e for e in events)
+
+    (call,) = [c for c in fake.calls if c["response_format"]["json_schema"]["name"] != "fixes"]
+    assert call["model"] == "gpt-4.1"
+    assert call["response_format"]["type"] == "json_schema" and call["response_format"]["json_schema"]["strict"]
+    assert "SC 3.3.1: Identify Errors: Describe errors in text." in call["messages"][0]["content"]
+    user = call["messages"][1]["content"]
+    assert "=== src/Form.tsx ===" in user and "   5|       <input type=\"text\"" in user
+    assert "line 5: label" in user  # static findings are listed so Claude doesn't repeat them
+    assert "node_modules" not in user and "README" not in user
+
+
+def test_claude_finding_on_a_line_the_static_rules_already_flagged_is_not_duplicated(env):
+    dup = {"issues": [{"file": "src/Form.tsx", "line": 6, "rule_id": "image-alt", "wcag_sc": "1.1.1", "impact": "critical", "problem": "dup"}]}
+    with_claude(env, FakeClaude(dup))
+    _, issues, _ = run(env, github()[0])
+    assert [i["detector"] for i in issues if i["rule_id"] == "image-alt"] == ["static"]
+
+
+@pytest.mark.parametrize(
+    "fake,note",
+    [
+        (FakeClaude(refusal="I cannot help with that."), "declined"),
+        (FakeClaude("not json"), "not valid JSON"),
+        (FakeClaude(error=openai.APIConnectionError(request=httpx.Request("POST", "https://x"))), "failed"),
+    ],
+)
+def test_claude_problems_never_fail_the_scan(env, fake, note):
+    with_claude(env, fake)
+    scan, issues, events = run(env, github()[0])
+    assert scan.status == "done" and {i["detector"] for i in issues} == {"static"}
+    assert any(note in e for e in events)
+
+
+def test_claude_reviews_only_the_first_n_files(env):
+    env["cfg"] = Settings(_env_file=None, openai_api_key="k", source_llm_max_files=1, database_url=env["cfg"].database_url)
+    fake = FakeClaude({"issues": []})
+    env["patch"].setattr(source_llm, "make_client", lambda _s: fake)
+    run(env, github()[0])
+    user = [c for c in fake.calls if c["response_format"]["json_schema"]["name"] != "fixes"][0]["messages"][1]["content"]
+    assert "=== public/index.html ===" in user and "Form.tsx" not in user  # app dirs first, then by path
+
+
+def test_review_batches_large_file_sets():
+    files = {f"f{i}.html": "x" * 30_000 for i in range(5)}
+    assert [len(b) for b in source_llm.batches(files)] == [2, 2, 1]
+
+
+# --- API ----------------------------------------------------------------------------------------------
+
+
+def test_create_repo_scan_needs_a_repo_and_ignores_the_url(env):
+    env["patch"].setattr(pipeline, "start", lambda _id: None)
+    with Session(db.engine()) as s:
+        out = asyncio.run(routes_scans.create_scan(routes_scans.ScanIn(target="repo", repo="o/r"), s, env["cfg"]))
+        assert (out["mode"], out["engine"], out["url"]) == ("source", "source", "https://github.com/o/r")
+        with pytest.raises(Exception, match="Enter the repository"):
+            asyncio.run(routes_scans.create_scan(routes_scans.ScanIn(target="repo"), s, env["cfg"]))
+        with pytest.raises(Exception, match="Enter a website URL"):
+            asyncio.run(routes_scans.create_scan(routes_scans.ScanIn(target="site"), s, env["cfg"]))
+
+
+# --- fix proposals and their validation -----------------------------------------------------------
+
+
+def run_fixes(env, fixes):
+    """Scan the repo with a fake model that proposes `fixes` (issue_id is the rule name; it is swapped for the real id)."""
+    fake = FakeClaude({"issues": []}, fixes=fixes)
+    with_claude(env, fake)
+    scan, _, events = run(env, github()[0])
+    with Session(db.engine()) as s:
+        detail = asyncio.run(routes_scans.get_scan("scan_s", s))
+    return scan, detail, events, fake
+
+
+def fx(rule, start, end, replacement, conf=0.9):
+    return {"issue_id": rule, "start_line": start, "end_line": end, "replacement": replacement, "explanation": "Fixed it.", "confidence": conf}
+
+
+def test_valid_fix_is_validated_and_improves_the_score(env):
+    scan, detail, events, _ = run_fixes(env, [fx("image-alt", 6, 6, '      <img src="/logo.png" alt="Company logo" />')])
+    (fix,) = detail["fixes"]
+    issue = next(i for i in detail["issues"] if i["id"] == fix["issue_id"])
+    assert issue["rule_id"] == "image-alt"
+    assert fix["validated"] is True and (fix["violations_before"], fix["violations_after"]) == (3, 2)
+    assert fix["original"].strip() == '<img src="/logo.png" />' and "alt=" in fix["patched"]
+    assert fix["strategy"] == "llm" and fix["confidence"] == 0.9 and "rejected_reason" not in fix
+    assert scan.score_after > scan.score_before
+    assert any("proposed fix for image-alt" in e for e in events) and any(e.startswith("validated image-alt") for e in events)
+
+
+@pytest.mark.parametrize(
+    "proposal,reason",
+    [
+        (fx("image-alt", 6, 6, '      <img src="/logo.png" />'), "still reports image-alt"),
+        (fx("image-alt", 6, 6, '<img src="/logo.png" alt="Logo" /><div onClick={go}>More</div>'), "introduces new violations: click-events-have-key-events"),
+        (fx("image-alt", 1, 2, "export function X() {"), "does not cover the line"),
+        (fx("image-alt", 6, 99, "x"), "line range is not valid"),
+    ],
+)
+def test_bad_fixes_are_rejected_with_a_reason_and_do_not_raise_the_score(env, proposal, reason):
+    scan, detail, events, _ = run_fixes(env, [proposal])
+    (fix,) = detail["fixes"]
+    assert fix["validated"] is False and reason in fix["rejected_reason"]
+    assert scan.score_after == scan.score_before
+    assert any(e.startswith("rejected image-alt") for e in events)
+
+
+def test_unsafe_or_empty_proposals_are_dropped(env):
+    scan, detail, events, _ = run_fixes(env, [fx("image-alt", 6, 6, '<img src="/l.png" alt="x" /><script>x()</script>'), fx("label", 5, 5, "   ")])
+    assert scan.status == "done" and detail["fixes"] == []
+    assert any("got no fix and are left for human review" in e for e in events)
+
+
+def test_only_static_findings_get_fixes_and_the_model_gets_the_file(env):
+    _, detail, _, fake = run_fixes(env, [])
+    fix_calls = [c for c in fake.calls if c["response_format"]["json_schema"]["name"] == "fixes"]
+    prompts = " ".join(c["messages"][1]["content"] for c in fix_calls)
+    assert "=== src/Form.tsx ===" in prompts and "   6|       <img src=\"/logo.png\" />" in prompts
+    assert "issue_id: iss_" in prompts
+
+
+def test_without_a_key_no_fixes_are_proposed(env):
+    scan, detail, events = run(env, github()[0])
+    assert detail_fixes(scan) == [] and scan.score_after is None
+
+
+def detail_fixes(scan):
+    from app import routes_scans
+
+    with Session(db.engine()) as s:
+        return asyncio.run(routes_scans.get_scan(scan.id, s))["fixes"]
+
+
+# --- settings changed in the dashboard ---------------------------------------------------------------------------
+
+
+def save_setting(key, value):
+    from app.models import AppSetting
+
+    with Session(db.engine()) as s:
+        s.merge(AppSetting(key=key, value=json.dumps(value)))
+        s.commit()
+
+
+def fix_calls(fake):
+    return [c for c in fake.calls if c["response_format"]["json_schema"]["name"] == "fixes"]
+
+
+def test_disabled_rules_apply_to_repo_scans(env):
+    save_setting("disabled_rules", "label")
+    _, issues, _ = run(env, github()[0])
+    rules = {i["rule_id"] for i in issues}
+    assert "label" not in rules and {"image-alt", "link-name"} <= rules
+
+
+def test_minimum_severity_applies_to_repo_scans(env):
+    save_setting("min_severity", "critical")
+    _, issues, _ = run(env, github()[0])
+    assert issues and {i["impact"] for i in issues} == {"critical"}
+
+
+def test_ai_review_switch_skips_the_review_but_still_proposes_fixes(env):
+    save_setting("ai_review", False)
+    fake = FakeClaude({"issues": [{"file": "src/Form.tsx", "line": 4, "rule_id": "x-y", "wcag_sc": "3.3.1", "impact": "serious", "problem": "p"}]},
+                      fixes=[fx("image-alt", 6, 6, '      <img src="/logo.png" alt="Logo" />')])
+    with_claude(env, fake)
+    scan, issues, events = run(env, github()[0])
+    assert not any(i["detector"] == "llm" for i in issues)
+    assert not [c for c in fake.calls if c["response_format"]["json_schema"]["name"] != "fixes"]
+    assert any("OpenAI review skipped: turned off in Settings" in e for e in events)
+    assert len(fix_calls(fake)) == 2  # one request per file that has findings (Form.tsx, index.html)
+
+
+def test_ai_fixes_switch_skips_the_fix_stage_but_still_reviews(env):
+    save_setting("ai_fixes", False)
+    fake = FakeClaude({"issues": []}, fixes=[fx("image-alt", 6, 6, '<img src="/logo.png" alt="Logo" />')])
+    with_claude(env, fake)
+    scan, _, _ = run(env, github()[0])
+    assert fix_calls(fake) == [] and len(fake.calls) >= 1 and scan.status == "done"
+    assert detail_fixes(scan) == [] and scan.score_after is None
+
+
+def test_both_switches_off_makes_no_openai_calls(env):
+    save_setting("ai_review", False)
+    save_setting("ai_fixes", False)
+    fake = FakeClaude({"issues": []})
+    with_claude(env, fake)
+    scan, _, events = run(env, github()[0])
+    assert fake.calls == [] and scan.status == "done" and any("turned off in Settings" in e for e in events)

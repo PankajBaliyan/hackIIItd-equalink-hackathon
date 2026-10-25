@@ -245,7 +245,7 @@ export const mockApi: ScanApi = {
     await delay(300);
     const scan: Scan = {
       id: `scan_${Math.random().toString(36).slice(2, 8)}`,
-      url: input.url,
+      url: input.url ?? "",
       mode: input.repo ? "repo" : "url",
       level: input.level,
       scope: input.scope,
@@ -274,6 +274,10 @@ export const mockApi: ScanApi = {
     const pr = prs.get(id);
     if (pr) detail.pr = pr;
     return detail;
+  },
+
+  async getEvents(id) {
+    return [...(running.get(id)?.buffer ?? [])];
   },
 
   async ship(id, fixIds) {

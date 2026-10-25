@@ -5,12 +5,17 @@ export type Stage =
 export interface Scan {
   id: string;
   url: string;
-  mode: "url" | "repo";
+  /** "repo": a site scan with a repo attached for PRs. "source": the repo's code is scanned. */
+  mode: "url" | "repo" | "source";
   level: "A" | "AA" | "AAA";
   scope: "page" | "site";
+  /** Where pages were rendered: a TinyFish remote browser, or Chromium on the server. */
+  engine?: "tinyfish" | "local" | "source";
   status: Stage;
   score_before?: number;
   score_after?: number;
+  /** Why a failed scan failed. */
+  error?: string;
   created_at: string;
   repo?: string | null;
   is_demo?: boolean;
@@ -30,6 +35,20 @@ export interface Issue {
   source_file?: string;
   source_line?: number;
   source_excerpt?: string;
+  /** The saved W3C rule that covers this issue's success criterion, if one is stored. */
+  /** What found it: axe on a rendered page, static rules on source, or the LLM review of source. */
+  detector?: "axe" | "static" | "llm";
+  /** Where the element sits on its page's screenshot, in percent of the image. */
+  box?: { x: number; y: number; w: number; h: number } | null;
+  rule?: { id: number; title: string; source_url: string | null; excerpt: string } | null;
+}
+
+/** A stored screenshot of one scanned page; the image is served at /scans/:id/shots/:shotId. */
+export interface Shot {
+  id: number;
+  page_url: string;
+  width: number;
+  height: number;
 }
 
 export interface Fix {
@@ -61,13 +80,16 @@ export interface ScanEvent {
   message: string;
   counters?: Record<Severity, number>;
   issue?: Issue;
-  type: "info" | "issue" | "fix" | "validated" | "rejected";
+  type: "info" | "issue" | "fix" | "validated" | "rejected" | "shot";
   ts: string;
 }
 
 /** Request body for POST /scans. */
 export interface CreateScanInput {
-  url: string;
+  /** Required for a site scan. A repo scan takes `repo` instead. */
+  url?: string;
+  /** "repo" scans the repository's source code; default "site" scans a rendered page. */
+  target?: "site" | "repo";
   repo?: string;
   level: Scan["level"];
   scope: Scan["scope"];
@@ -79,6 +101,8 @@ export interface ScanDetail {
   scan: Scan;
   issues: Issue[];
   fixes: Fix[];
+  /** Page screenshots; absent from mock scans. */
+  shots?: Shot[];
   pr?: PullRequest;
   summary?: { accepted: number; rejected: number; review: number; included: number };
   screenshot?: string;
@@ -162,6 +186,8 @@ export interface ScanApi {
   listBranches(repo: string): Promise<BranchList>;
   compareBranches(repo: string, base: string, head: string): Promise<CompareResult>;
   createPull(input: NewPull): Promise<PullSummary>;
+  /** The stored event log, for opening a scan that already finished. */
+  getEvents(id: string): Promise<ScanEvent[]>;
   ship(id: string, fixIds?: string[]): Promise<PullRequest>;
   getGithub(): Promise<GithubStatus>;
   connectGithub(): Promise<GithubStatus>;
@@ -174,6 +200,42 @@ export interface ScanApi {
     onEvent: (e: ScanEvent) => void,
     onConnection?: (s: ConnectionState) => void,
   ): () => void;
+}
+
+/** Scan behaviour that can be changed in Settings; the server stores it and uses it for every new scan. */
+export interface SettingsValues {
+  default_level: Scan["level"];
+  default_scope: Scan["scope"];
+  max_site_pages: number;
+  fix_max: number;
+  openai_model: string;
+  min_severity: Severity;
+  disabled_rules: string[];
+  ai_review: boolean;
+  ai_fixes: boolean;
+}
+
+/** What the server was started with (server/.env). Only whether a key is set, never the key. */
+export interface ServerInfo {
+  openai: { configured: boolean; model: string };
+  tinyfish: { configured: boolean };
+  github: { mode: "oauth" | "none" };
+  scan_engine: "auto" | "tinyfish" | "local";
+  allow_private_targets: boolean;
+  screenshot_max_height: number;
+  fix_batch: number;
+  source_max_files: number;
+  source_llm_max_files: number;
+  w3c_sync: { schedule: boolean; interval_days: number };
+}
+
+export interface SettingsResponse {
+  values: SettingsValues;
+  /** The server's own defaults, which a reset goes back to. */
+  defaults: SettingsValues;
+  /** The keys that differ from the defaults. */
+  changed: (keyof SettingsValues)[];
+  server: ServerInfo;
 }
 
 /** A tracked website, stored by the server. */

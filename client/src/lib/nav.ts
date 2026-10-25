@@ -18,15 +18,14 @@ export type Tier = "P0" | "P1" | "P2";
 export interface NavItem {
   label: string;
   to: string;
-  params?: Record<string, string>;
+  /** Opens a specific scan: the sidebar points it at the latest one, and disables it until a scan exists. */
+  needsScan?: boolean;
   icon: LucideIcon;
   phase: string;
   tier: Tier;
   soon?: boolean;
   description: string;
 }
-
-export const DEMO_SCAN_ID = "demo";
 
 export const navGroups: { label: string; items: NavItem[] }[] = [
   {
@@ -44,7 +43,7 @@ export const navGroups: { label: string; items: NavItem[] }[] = [
       {
         label: "Live Scan",
         to: "/scans/$id",
-        params: { id: DEMO_SCAN_ID },
+        needsScan: true,
         icon: Activity,
         phase: "Phase 5",
         tier: "P0",
@@ -53,7 +52,7 @@ export const navGroups: { label: string; items: NavItem[] }[] = [
       {
         label: "Fixes",
         to: "/scans/$id/fixes",
-        params: { id: DEMO_SCAN_ID },
+        needsScan: true,
         icon: Wrench,
         phase: "Phase 6–7",
         tier: "P0",

@@ -39,13 +39,24 @@ function Logo({ compact }: { compact?: boolean }) {
   );
 }
 
-function NavList({ collapsed, onNavigate }: { collapsed?: boolean; onNavigate?: () => void }) {
+export function NavList({
+  collapsed,
+  onNavigate,
+}: {
+  collapsed?: boolean;
+  onNavigate?: () => void;
+}) {
   // Live Scan and Fixes point at the most recent scan
   const { data: scans } = useQuery({
     queryKey: ["scans"],
     queryFn: async () => (await getApi()).listScans(),
   });
   const latestId = scans?.[0]?.id;
+  const linkClass = cn(
+    "group flex min-h-11 items-center gap-3 rounded-md px-2.5 text-sm font-medium text-muted transition-colors duration-fast hover:bg-surface-2 hover:text-text lg:min-h-9",
+    "data-[status=active]:bg-surface-2 data-[status=active]:text-text",
+    collapsed && "justify-center px-0",
+  );
   return (
     <nav aria-label="Primary" className="flex-1 overflow-y-auto px-3 py-2">
       {navGroups.map((g) => (
@@ -61,19 +72,37 @@ function NavList({ collapsed, onNavigate }: { collapsed?: boolean; onNavigate?: 
           <ul className="space-y-0.5">
             {g.items.map((item) => {
               const Icon = item.icon;
+              // These open a scan, and there is none yet: show them but don't link to a page that can't load.
+              if (item.needsScan && !latestId) {
+                return (
+                  <li key={item.label}>
+                    <span
+                      role="link"
+                      aria-disabled="true"
+                      title="Run a scan first"
+                      className={cn(
+                        linkClass,
+                        "cursor-not-allowed opacity-50 hover:bg-transparent hover:text-muted",
+                      )}
+                    >
+                      <Icon aria-hidden className="size-[18px] shrink-0" />
+                      <span className={cn("flex-1 truncate", collapsed && "sr-only")}>
+                        {item.label}
+                      </span>
+                      <span className="sr-only">(run a scan first)</span>
+                    </span>
+                  </li>
+                );
+              }
               return (
                 <li key={item.label}>
                   <Link
                     to={item.to}
-                    params={(item.params && latestId ? { id: latestId } : item.params) as never}
+                    params={(item.needsScan ? { id: latestId } : undefined) as never}
                     onClick={onNavigate}
                     activeOptions={{ exact: true }}
                     title={collapsed ? item.label : undefined}
-                    className={cn(
-                      "group flex min-h-11 items-center gap-3 rounded-md px-2.5 text-sm font-medium text-muted transition-colors duration-fast hover:bg-surface-2 hover:text-text lg:min-h-9",
-                      "data-[status=active]:bg-surface-2 data-[status=active]:text-text",
-                      collapsed && "justify-center px-0",
-                    )}
+                    className={linkClass}
                   >
                     <Icon
                       aria-hidden

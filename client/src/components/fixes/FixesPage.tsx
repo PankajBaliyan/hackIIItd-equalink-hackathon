@@ -29,18 +29,10 @@ import {
 } from "@/components/ui/dialog";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Progress } from "@/components/ui/progress";
-import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetHeader,
-  SheetTitle,
-} from "@/components/ui/sheet";
 import { SeverityBadge } from "@/components/ui/severity-badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { StatusChip, type FixStatus } from "@/components/ui/status-chip";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { useMediaQuery } from "@/hooks/use-media-query";
 import type { Severity } from "@/lib/types";
 import { PRINCIPLES, RULE_TITLES, ruleTitle, understandingUrl } from "@/lib/wcag";
 import { cn } from "@/lib/utils";
@@ -96,11 +88,13 @@ function Detail({
   const info = RULE_TITLES[issue.rule_id];
   return (
     <div className="space-y-4">
-      <header className="space-y-2">
+      <header className="space-y-2 pr-8">
         <div className="flex flex-wrap items-center gap-2">
           <SeverityBadge severity={issue.impact} />
           <StatusChip status={row.status} />
           {fix && <Chip>{fix.strategy === "rule" ? "Rule-based" : "LLM-assisted"}</Chip>}
+          {issue.detector === "static" && <Chip>Static check</Chip>}
+          {issue.detector === "llm" && <Chip>AI review</Chip>}
         </div>
         <h3 className="text-xl font-semibold">{ruleTitle(issue.rule_id)}</h3>
         {info && <p className="text-sm text-muted">{info.description}</p>}
@@ -119,17 +113,61 @@ function Detail({
             <span className="sr-only"> (opens in a new tab)</span>
           </a>
         </dd>
-        <dt className="text-muted">Page</dt>
-        <dd className="break-all font-mono">{issue.page_url}</dd>
-        <dt className="text-muted">Selector</dt>
-        <dd className="break-all font-mono">{issue.selector}</dd>
-        {issue.source_file && (
+        {issue.rule && (
+          <>
+            <dt className="text-muted">W3C rule</dt>
+            <dd className="space-y-1">
+              <span className="block font-medium">{issue.rule.title}</span>
+              <span className="block text-muted">{issue.rule.excerpt}</span>
+              {issue.rule.source_url?.split(", ").map((url) => (
+                <a
+                  key={url}
+                  href={url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex max-w-full items-center gap-1 break-all font-mono text-xs text-muted underline underline-offset-2 hover:text-text"
+                >
+                  {url} <ExternalLink aria-hidden className="size-3 shrink-0" />
+                  <span className="sr-only"> (opens in a new tab)</span>
+                </a>
+              ))}
+            </dd>
+          </>
+        )}
+        {issue.source_file && issue.detector !== "axe" ? (
           <>
             <dt className="text-muted">Source</dt>
             <dd className="break-all font-mono">
-              {issue.source_file}
-              {issue.source_line ? `:${issue.source_line}` : ""}
+              <a
+                href={issue.page_url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1 text-text underline underline-offset-2 hover:text-brand-2"
+              >
+                {issue.source_file}
+                {issue.source_line ? `:${issue.source_line}` : ""}
+                <ExternalLink aria-hidden className="size-3 shrink-0" />
+                <span className="sr-only"> (opens on GitHub in a new tab)</span>
+              </a>
             </dd>
+            <dt className="text-muted">Code</dt>
+            <dd className="break-all font-mono">{issue.selector}</dd>
+          </>
+        ) : (
+          <>
+            <dt className="text-muted">Page</dt>
+            <dd className="break-all font-mono">{issue.page_url}</dd>
+            <dt className="text-muted">Selector</dt>
+            <dd className="break-all font-mono">{issue.selector}</dd>
+            {issue.source_file && (
+              <>
+                <dt className="text-muted">Source</dt>
+                <dd className="break-all font-mono">
+                  {issue.source_file}
+                  {issue.source_line ? `:${issue.source_line}` : ""}
+                </dd>
+              </>
+            )}
           </>
         )}
         {issue.context && (
@@ -252,7 +290,6 @@ export function FixesPage({ id }: { id: string }) {
   const s = useScanStore();
   useEffect(() => s.openScan(id), [id]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const desktop = useMediaQuery("(min-width: 1024px)");
   const [selected, setSelected] = useState<string | null>(null);
   const [reviewing, setReviewing] = useState(false);
   const [sev, setSev] = useState("all");
@@ -437,10 +474,10 @@ export function FixesPage({ id }: { id: string }) {
 
         {s.pr && <PRCard pr={s.pr} files={files} />}
 
-        <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)_15rem]">
+        <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_18rem]">
           <aside
             aria-label="Summary"
-            className="space-y-4 lg:sticky lg:top-20 lg:order-3 lg:self-start"
+            className="space-y-4 lg:sticky lg:top-20 lg:order-2 lg:self-start"
           >
             <div className="space-y-4 rounded-card border bg-surface p-4">
               <Suspense fallback={<Skeleton className="mx-auto size-44 rounded-full" />}>
@@ -597,36 +634,23 @@ export function FixesPage({ id }: { id: string }) {
             )}
           </section>
 
-          <section aria-label="Issue detail" className="lg:order-2">
-            {desktop ? (
-              detail ? (
-                <div className="rounded-card border bg-surface p-5">{detail}</div>
-              ) : (
-                <EmptyState
-                  as="h3"
-                  title="Select an issue"
-                  description="Choose an issue on the left to see its fix and diff."
-                />
-              )
-            ) : (
-              <Sheet open={!!selectedRow} onOpenChange={(o) => !o && setSelected(null)}>
-                <SheetContent side="bottom" className="max-h-[85vh] overflow-y-auto">
-                  <SheetHeader>
-                    <SheetTitle>Issue detail</SheetTitle>
-                    <SheetDescription>Fix explanation and diff</SheetDescription>
-                  </SheetHeader>
-                  <div className="mt-4">{detail}</div>
-                </SheetContent>
-              </Sheet>
-            )}
-          </section>
         </div>
 
         <div className="fixed inset-x-0 bottom-0 z-30 border-t bg-surface p-3 lg:hidden">
           {shipControls}
         </div>
 
-        <RepoAssistant scan={scan} rows={rows} selectedRow={selectedRow} />
+        <Dialog open={!!selectedRow} onOpenChange={(o) => !o && setSelected(null)}>
+          <DialogContent className="max-h-[85vh] max-w-4xl overflow-y-auto bg-surface p-6 sm:rounded-card">
+            <DialogHeader className="sr-only">
+              <DialogTitle>
+                {selectedRow ? ruleTitle(selectedRow.issue.rule_id) : "Issue detail"}
+              </DialogTitle>
+              <DialogDescription>Fix explanation and diff</DialogDescription>
+            </DialogHeader>
+            {detail}
+          </DialogContent>
+        </Dialog>
 
         <Dialog open={confirm} onOpenChange={(o) => !shipping && setConfirm(o)}>
           <DialogContent>
