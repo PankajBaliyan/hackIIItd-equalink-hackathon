@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState } from "react";
 import { AnnotatedScreenshot } from "@/components/scan/AnnotatedScreenshot";
 import { ScoreRing } from "@/components/scan/ScoreRing";
 import { completionSummary } from "@/components/scan/summary";
+import { scoreView } from "@/components/scan/scoreView";
 import { TerminalFeed } from "@/components/scan/TerminalFeed";
 import { FocusHeading } from "@/components/shell/PagePlaceholder";
 import { AnimatedCounter } from "@/components/ui/animated-counter";
@@ -56,6 +57,10 @@ export function LiveScan({ id }: { id: string }) {
   const done = scan?.status === "done";
   const running = !!scan && !done && !failed;
   const summary = useMemo(() => completionSummary(s.issues, s.fixes), [s.issues, s.fixes]);
+  const scores = useMemo(
+    () => (s.scan ? scoreView(s.scan, s.issues, s.fixes) : {}),
+    [s.scan, s.issues, s.fixes],
+  );
   const counters = useMemo(() => countBySeverity(s.issues), [s.issues]);
   const elapsed = useElapsed(scan?.created_at, running, s.events[s.events.length - 1]?.ts);
 
@@ -180,8 +185,20 @@ export function LiveScan({ id }: { id: string }) {
         <h2 id="live-stats" className="sr-only">
           Live results
         </h2>
-        <div className="grid place-items-center rounded-card border bg-surface p-4">
-          <ScoreRing score={scan.score_before} label="Score before" />
+        <div className="flex flex-col items-center justify-center gap-3 rounded-card border bg-surface p-4">
+          <div className="flex flex-wrap items-start justify-center gap-6">
+            <ScoreRing score={scores.before?.value} label={scores.before?.label ?? "Score"} />
+            {scores.after && <ScoreRing score={scores.after.value} label={scores.after.label} />}
+          </div>
+          {scores.delta != null && (
+            <p className="tabular text-sm text-muted">
+              <strong className={scores.delta > 0 ? "text-success" : "text-text"}>
+                {scores.delta > 0 ? `+${scores.delta}` : scores.delta}
+              </strong>{" "}
+              {Math.abs(scores.delta) === 1 ? "point" : "points"} from validated fixes
+              {scores.after?.final ? "" : " so far"}
+            </p>
+          )}
         </div>
         <div className="space-y-4 rounded-card border bg-surface p-4">
           <ul className="grid grid-cols-2 gap-3 sm:grid-cols-4">
