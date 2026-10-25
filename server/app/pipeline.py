@@ -422,7 +422,7 @@ def fix_dict(f: FixRow) -> dict:
     out = {
         "id": f.id, "issue_id": f.issue_id, "strategy": f.strategy, "original": f.original, "patched": f.patched,
         "explanation": f.explanation, "confidence": f.confidence, "validated": f.validated,
-        "violations_before": f.violations_before, "violations_after": f.violations_after,
+        "violations_before": f.violations_before, "violations_after": f.violations_after, "included": f.included,
     }
     if f.rejected_reason:
         out["rejected_reason"] = f.rejected_reason

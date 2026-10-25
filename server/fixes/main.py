@@ -269,6 +269,7 @@ def create_app(db_path=None):
     app.state.get_scan = get_scan
     app.state.events = events
     app.state.ship = ship
+    app.state.review_fix = review_fix
     app.state.scan_repo = scan_repo
 
     return app

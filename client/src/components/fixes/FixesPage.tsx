@@ -332,7 +332,6 @@ export function FixesPage({ id }: { id: string }) {
   };
   const includedRows = rows.filter((r) => r.fix?.validated && r.fix.included !== false);
   const selectedRow = rows.find((r) => r.issue.id === selected) ?? null;
-  const repoMode = scan?.mode === "repo";
   useEffect(() => {
     setSelected(null);
     setConfirm(false);
@@ -340,6 +339,8 @@ export function FixesPage({ id }: { id: string }) {
   const files = [
     ...new Set(includedRows.map((r) => r.issue.source_file).filter((f): f is string => !!f)),
   ];
+  // A PR needs fixes that point at source files: repository scans, not fixes to a rendered page.
+  const repoMode = scan?.mode === "source" || files.length > 0;
 
   const ship = async () => {
     setShipping(true);

@@ -102,7 +102,7 @@ validation reason for rejected fixes, before/after score gauge, per-fix include 
    to a repo file/line, so the "files changed" list in the confirm dialog is empty and a PR can't be built from them.
    Only repo (source) scans have file + line. (server/app/routes_scans.py: ship, FixesPage.tsx)
 
-2. [High] Repo (source) scans never get the PR controls.
+2. [Done] Repo (source) scans never got the PR controls (fixed: FixesPage now shows Open PR for source scans).
    repoMode is `scan.mode === "repo"`, but a repo scan has mode "source". These are the scans whose fixes have a
    real file and line, yet they show "Connect repo to ship" + "Copy patch" instead of "Open PR".
    (client/src/components/fixes/FixesPage.tsx: repoMode)
@@ -139,10 +139,9 @@ Working and dynamic: the page lists real pull requests from GitHub (open / close
 (POST /integrations/github/pulls; EquaLink never merges). Fixes from a github.com repo scan can be shipped as a PR
 (server/fixes/main.py: ship, via the fixes service).
 
-1. [High] Live scans still cannot open a PR.
-   POST /scans/{id}/ship for a scan created by the live pipeline (website or source scan) still returns 501
-   "This live scan has no generated fixes to ship yet" (server/app/routes_scans.py: ship). Only scans imported by the
-   fixes service (github.com URL scan) ship. auto_ship is still sent by the form but nothing reads it.
+1. [Med] Website scans (mode "url" / "repo") still cannot open a PR: their fixes patch the rendered DOM and nothing maps
+   an element to a repo file/line, so POST /scans/{id}/ship answers 422 for them. auto_ship is still read by nothing
+   (the form sends it, no PR is opened automatically after a scan).
 
 2. [Med] PR cards still show hardcoded "accessibility" and "automated" chips (not GitHub labels). Checks and review
    status are never fetched, and there is no webhook route (GITHUB_WEBHOOK_SECRET is read by no code).
@@ -152,6 +151,11 @@ Working and dynamic: the page lists real pull requests from GitHub (open / close
    screenshots in the description. (server/fixes/main.py: ship)
 
 Done:
+- Source (repository) scans can open a PR: POST /scans/{id}/ship applies the validated, included fixes to the files at the
+  default branch's head (skips fixes whose lines changed or overlap, rejects a file whose combined fixes add violations),
+  commits them to a new branch equalink/a11y-fixes-<scan>-<id>, opens the PR (score before/after, rule table in the
+  description) and stores it (table pullrequest); GET /scans/{id} returns `pr`. Include/exclude per fix is saved
+  (PATCH /scans/{id}/fixes/{fix_id}, column fix.included). (server/app/routes_scans.py, shipping.py, github.py)
 - The PR list is no longer lost on reload: it is read from GitHub, not browser memory.
 - Open / closed / merged state is shown from GitHub.
 - "May open PRs on this repo" is enforced: listing, branches, compare, create PR and ship all require the repo to be

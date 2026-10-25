@@ -137,6 +137,21 @@ class FixRow(SQLModel, table=True):
     rejected_reason: str | None = None
     start_line: int | None = None  # repo scans: the lines of the file that `patched` replaces (1-based, inclusive)
     end_line: int | None = None
+    included: bool = True  # the reviewer's choice: only validated, included fixes go into a pull request
+
+
+class PullRow(SQLModel, table=True):
+    """The pull request opened from a scan's fixes (one per scan)."""
+
+    __tablename__ = "pullrequest"
+
+    scan_id: str = Field(primary_key=True)
+    repo: str
+    branch: str
+    number: int
+    url: str
+    fix_ids: str  # JSON list of the fix ids that were committed
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 class EventRow(SQLModel, table=True):

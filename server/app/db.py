@@ -41,6 +41,9 @@ def init_db() -> None:
         if name not in issue_cols:
             with engine().begin() as conn:
                 conn.execute(text(f"ALTER TABLE issue ADD COLUMN {name} {ddl}"))
+    if "included" not in {c["name"] for c in insp.get_columns("fix")}:
+        with engine().begin() as conn:
+            conn.execute(text("ALTER TABLE fix ADD COLUMN included BOOLEAN NOT NULL DEFAULT 1"))
     if "origin" not in {c["name"] for c in insp.get_columns("ruledoc")}:
         with engine().begin() as conn:
             conn.execute(text("ALTER TABLE ruledoc ADD COLUMN origin VARCHAR NOT NULL DEFAULT 'manual'"))

@@ -56,9 +56,9 @@ def test_list_get_and_missing(client):
     assert client.get("/scans/nope/events").status_code == 404
 
 
-def test_ship_is_not_implemented(client):
+def test_ship_waits_for_the_scan_to_finish(client):
     sid = client.post("/scans", json={"url": "a.com"}).json()["id"]
-    assert client.post(f"/scans/{sid}/ship").status_code == 501
+    assert client.post(f"/scans/{sid}/ship").status_code == 409
 
 
 def test_events_replay_and_stop_at_terminal_stage(client):

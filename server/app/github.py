@@ -1,5 +1,6 @@
 """Thin async client for the GitHub REST API (PAT and GitHub App auth)."""
 
+import base64
 import time
 from urllib.parse import quote
 
@@ -170,3 +171,50 @@ async def file_text(c: httpx.AsyncClient, full_name: str, path: str, ref: str) -
 
 def client(token: str | None = None, transport: httpx.AsyncBaseTransport | None = None) -> httpx.AsyncClient:
     return _client(token, transport)
+
+
+async def branch_head(token: str, repo: str) -> tuple[str, str]:
+    """(default branch, sha of its latest commit)."""
+    async with _client(token) as c:
+        base = await default_branch(c, repo)
+        ref = await _check(await c.get(f"/repos/{repo}/git/ref/heads/{quote(base, safe='')}"))
+    return base, ref["object"]["sha"]
+
+
+async def file_at(token: str, repo: str, path: str, ref: str) -> tuple[str, str]:
+    """(UTF-8 text, blob sha) of a file at a commit."""
+    async with _client(token) as c:
+        data = await _check(await c.get(f"/repos/{repo}/contents/{quote(path)}", params={"ref": ref}))
+    if not isinstance(data, dict) or data.get("encoding") != "base64":
+        raise GitHubError(422, f"{path} is not a regular file EquaLink can edit.")
+    try:
+        return base64.b64decode(data["content"]).decode("utf-8"), data["sha"]
+    except (ValueError, UnicodeError):
+        raise GitHubError(422, f"{path} is not a UTF-8 text file.")
+
+
+async def create_branch(token: str, repo: str, branch: str, sha: str) -> None:
+    async with _client(token) as c:
+        await _check(await c.post(f"/repos/{repo}/git/refs", json={"ref": f"refs/heads/{branch}", "sha": sha}))
+
+
+async def delete_branch(token: str, repo: str, branch: str) -> None:
+    """Best effort clean-up of a branch left behind by a failed PR."""
+    try:
+        async with _client(token) as c:
+            await c.delete(f"/repos/{repo}/git/refs/heads/{quote(branch, safe='/')}")
+    except httpx.HTTPError:
+        pass
+
+
+async def commit_file(token: str, repo: str, branch: str, path: str, text: str, blob_sha: str, message: str) -> None:
+    async with _client(token) as c:
+        await _check(
+            await c.put(
+                f"/repos/{repo}/contents/{quote(path)}",
+                json={
+                    "message": message, "branch": branch, "sha": blob_sha,
+                    "content": base64.b64encode(text.encode("utf-8")).decode("ascii"),
+                },
+            )
+        )
