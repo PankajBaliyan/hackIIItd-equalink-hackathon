@@ -5,12 +5,12 @@ test("full demo path on mocks: scan → live → fixes → diff → PR", async (
   await page.goto("/");
   await page.waitForLoadState("networkidle"); // wait for hydration
   await page.getByLabel("Website URL").fill("not a url");
-  await page.getByRole("button", { name: /Scan with TinyFish/ }).click();
+  await page.getByRole("button", { name: /Scan website/ }).click();
   await expect(page.getByText("That doesn't look like a valid URL.")).toBeVisible();
 
   await page.getByLabel("Website URL").fill("shopeasy.dev");
   await page.getByLabel("GitHub repo (optional)").fill("shopeasy/shopeasy-demo");
-  await page.getByRole("button", { name: /Scan with TinyFish/ }).click();
+  await page.getByRole("button", { name: /Scan website/ }).click();
 
   await expect(page).toHaveURL(/\/scans\/scan_/);
   await expect(page.getByRole("log")).toContainText("promo-modal", { timeout: 30_000 });

@@ -254,7 +254,7 @@ export function ScanForm({
       />
 
       <Button type="submit" variant="primary" size="lg" className="w-full sm:w-auto" loading={busy}>
-        {busy ? "Starting scan…" : target === "repo" ? "Scan repo →" : "Scan with TinyFish →"}
+        {busy ? "Starting scan…" : target === "repo" ? "Scan repo →" : "Scan website →"}
       </Button>
     </form>
   );
