@@ -89,9 +89,6 @@ def test_connect_without_config_is_400(client):
     assert r.status_code == 400 and "isn't configured" in r.json()["detail"]
 
 
-def test_callback_rejects_bad_state(client):
-    r = client.get("/integrations/github/callback", params={"installation_id": 1, "state": "nope"})
-    assert r.status_code == 400
 
 
 async def test_github_client_surfaces_api_errors(monkeypatch):

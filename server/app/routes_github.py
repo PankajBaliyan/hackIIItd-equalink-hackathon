@@ -45,10 +45,6 @@ def _disconnected(s: Settings, install_url: str | None = None) -> GithubStatus:
 
 async def _token(s: Settings, conn: GithubConnection) -> tuple[str, bool]:
     """(token, is_installation) for talking to GitHub as this connection."""
-    if conn.mode == "app":
-        if not s.app_configured or conn.installation_id is None:
-            raise HTTPException(409, "GitHub App is no longer configured on the server.")
-        return await github.installation_token(s, conn.installation_id), True
     if conn.mode == "oauth":
         if not conn.access_token:
             raise HTTPException(409, "No GitHub token stored. Connect again.")
@@ -112,36 +108,14 @@ async def status(s: SettingsDep, db: SessionDep):
 async def connect(s: SettingsDep, db: SessionDep):
     if s.github_mode == "none":
         raise HTTPException(
-            400, "GitHub isn't configured on the server. Set GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET, or the GITHUB_APP_* variables, in server/.env."
+            400, "GitHub isn't configured on the server. Set GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET in server/.env."
         )
     if not s.state_secret:
         raise HTTPException(500, "STATE_SECRET is not set in server/.env.")
     try:
-        if s.github_mode == "oauth":
-            return _disconnected(s, install_url=github.oauth_authorize_url(s, _sign_state(s, "gh-oauth")))
-        if s.github_mode == "app":
-            url = f"https://github.com/apps/{s.github_app_slug}/installations/new?state={_sign_state(s)}"
-            return _disconnected(s, install_url=url)
-        raise HTTPException(400, "GitHub isn't configured on the server.")
+        return _disconnected(s, install_url=github.oauth_authorize_url(s, _sign_state(s, "gh-oauth")))
     except github.GitHubError as e:
         raise HTTPException(502, e.message)
-
-
-@router.get("/callback")
-async def callback(
-    s: SettingsDep,
-    db: SessionDep,
-    installation_id: Annotated[int, Query()],
-    state: Annotated[str, Query()],
-):
-    """GitHub App 'Setup URL': GitHub redirects here after the user installs the app."""
-    _check_state(s, state)
-    try:
-        account = await github.installation_account(s, installation_id)
-    except github.GitHubError as e:
-        raise HTTPException(502, e.message)
-    _save(db, "app", account, installation_id)
-    return RedirectResponse(f"{s.frontend_url}/integrations/github?connected=1")
 
 
 @router.get("/oauth/callback")

@@ -16,21 +16,16 @@ cp .env.example .env      # then edit, see below
 
 In `client/.env` keep `VITE_API_BASE_URL=http://localhost:8000` and `VITE_GITHUB_LIVE=true`. Scans stay mocked until their endpoints exist.
 
-## Connect GitHub (pick one mode in `server/.env`)
+## Connect GitHub in `server/.env`
 
-**OAuth, "Sign in with GitHub" (recommended for dev).** At github.com/settings/developers create a **New OAuth App** with Homepage URL `http://localhost:5173` and Authorization callback URL `http://localhost:8000/integrations/github/oauth/callback`. Put its Client ID and a generated Client secret in `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET`, then restart the server. The dashboard button becomes **Sign in with GitHub** and sends you to github.com. The user token (scope `repo`) is stored server-side in SQLite.
-
-**GitHub App (production).** Create an app at github.com/settings/apps with Contents (RW), Pull requests (RW) and Metadata (R). Set its **Setup URL** to `http://localhost:8000/integrations/github/callback`, then fill `GITHUB_APP_ID`, `GITHUB_APP_SLUG`, `GITHUB_APP_PRIVATE_KEY` (or `_PATH`) and `STATE_SECRET`. Connect sends you to github.com to install the app, then back to the dashboard.
-
-Priority if both are set: App, then OAuth. Secrets live only in `.env`, which is git-ignored.
+**OAuth, "Sign in with GitHub".** At github.com/settings/developers create a **New OAuth App** with Homepage URL `http://localhost:5173` and Authorization callback URL `http://localhost:8000/integrations/github/oauth/callback`. Put its Client ID and Client secret in `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET`, then restart the server. The dashboard button becomes **Sign in with GitHub** and sends you to github.com. The user token (scope `repo`) is stored server-side in SQLite.
 
 ## Endpoints
 
 | Method | Route | Purpose |
 |---|---|---|
 | GET | `/integrations/github` | Connection status and live repo list |
-| POST | `/integrations/github/connect` | Token: connect now. OAuth/App: returns `install_url` to redirect to |
-| GET | `/integrations/github/callback` | App install redirect target |
+| POST | `/integrations/github/connect` | Returns OAuth `install_url` to redirect to |
 | GET | `/integrations/github/oauth/callback` | OAuth redirect target |
 | PATCH | `/integrations/github/repos` | Enable or disable PRs on a repo |
 | DELETE | `/integrations/github` | Disconnect and clear settings |

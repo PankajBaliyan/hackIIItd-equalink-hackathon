@@ -1,10 +1,8 @@
 """Thin async client for the GitHub REST API (PAT and GitHub App auth)."""
 
-import time
 from urllib.parse import quote
 
 import httpx
-import jwt
 
 from app.config import Settings
 
@@ -37,22 +35,7 @@ async def _check(res: httpx.Response) -> dict:
     raise GitHubError(res.status_code, f"GitHub said: {msg}")
 
 
-def app_jwt(s: Settings) -> str:
-    now = int(time.time())
-    payload = {"iat": now - 60, "exp": now + 9 * 60, "iss": s.github_app_id}
-    return jwt.encode(payload, s.app_private_key, algorithm="RS256")
 
-
-async def installation_token(s: Settings, installation_id: int) -> str:
-    async with _client(app_jwt(s)) as c:
-        data = await _check(await c.post(f"/app/installations/{installation_id}/access_tokens"))
-    return data["token"]
-
-
-async def installation_account(s: Settings, installation_id: int) -> str:
-    async with _client(app_jwt(s)) as c:
-        data = await _check(await c.get(f"/app/installations/{installation_id}"))
-    return data["account"]["login"]
 
 
 async def pat_user(token: str) -> str:

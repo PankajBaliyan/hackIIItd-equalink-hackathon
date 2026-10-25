@@ -36,7 +36,7 @@ const ENV = [
   ["TINYFISH_API_KEY", "Backend: TinyFish remote browser for scans, and the W3C rules sync"],
   ["SCAN_ENGINE", "auto (default), tinyfish or local. auto uses TinyFish for public URLs"],
   ["OPENAI_API_KEY", "Backend: OpenAI review in repo scans (and fixes, later)"],
-  ["GITHUB_APP_ID / GITHUB_APP_PRIVATE_KEY / GITHUB_WEBHOOK_SECRET", "Backend: GitHub App"],
+  ["GITHUB_CLIENT_ID / GITHUB_CLIENT_SECRET", "Backend: GitHub OAuth App for user login"],
 ] as const;
 
 function Page() {

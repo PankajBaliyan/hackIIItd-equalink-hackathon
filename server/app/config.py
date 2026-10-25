@@ -1,5 +1,4 @@
 from functools import lru_cache
-from pathlib import Path
 from typing import Literal
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -38,24 +37,6 @@ class Settings(BaseSettings):
 
     github_client_id: str = ""
     github_client_secret: str = ""
-    github_app_id: str = ""
-    github_app_slug: str = ""
-    github_app_private_key: str = ""
-    github_app_private_key_path: str = ""
-    github_webhook_secret: str = ""
-
-    @property
-    def app_private_key(self) -> str:
-        """PEM contents from the env var (\\n escapes allowed) or from the key file."""
-        if self.github_app_private_key:
-            return self.github_app_private_key.replace("\\n", "\n")
-        if self.github_app_private_key_path:
-            return Path(self.github_app_private_key_path).expanduser().read_text()
-        return ""
-
-    @property
-    def app_configured(self) -> bool:
-        return bool(self.github_app_id and self.github_app_slug and self.app_private_key)
 
     @property
     def oauth_configured(self) -> bool:
@@ -67,12 +48,8 @@ class Settings(BaseSettings):
 
     @property
     def github_mode(self) -> str:
-        """'app' (production), 'oauth' ("Sign in with GitHub"), or 'none'."""
-        if self.app_configured:
-            return "app"
-        if self.oauth_configured:
-            return "oauth"
-        return "none"
+        """'oauth' ("Sign in with GitHub") or 'none'."""
+        return "oauth" if self.oauth_configured else "none"
 
 
 @lru_cache
