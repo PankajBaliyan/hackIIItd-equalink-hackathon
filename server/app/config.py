@@ -16,6 +16,15 @@ class Settings(BaseSettings):
     # Scans fetch URLs the user supplies. Allow localhost/private targets for local dev; set false when deployed.
     allow_private_targets: bool = True
     max_site_pages: int = 20
+    # What a scan form starts with. Editable in the dashboard (Settings), which overrides these.
+    default_level: Literal["A", "AA", "AAA"] = "AA"
+    default_scope: Literal["page", "site"] = "page"
+    # Only issues at or above this severity are recorded, and rules listed here (comma separated) are skipped.
+    min_severity: Literal["minor", "moderate", "serious", "critical"] = "minor"
+    disabled_rules: str = ""
+    # Switches for the two OpenAI stages, which need OPENAI_API_KEY and cost money per scan.
+    ai_review: bool = True
+    ai_fixes: bool = True
     # Page screenshots are capped to this many CSS pixels of height (very long pages are cut off at the bottom).
     screenshot_max_height: int = 4000
 

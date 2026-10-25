@@ -9,7 +9,7 @@ import secrets
 from fastapi import HTTPException
 from sqlmodel import Session, select
 
-from app import fixer, github, pipeline, rule_lookup, source_llm
+from app import app_settings, fixer, github, pipeline, rule_lookup, source_llm
 from app.config import Settings
 from app.models import GithubConnection, IssueRow, RuleDoc, Scan
 from app.source_rules import Finding, analyze, is_source_file
@@ -52,10 +52,10 @@ def _friendly(e: github.GitHubError, repo: str) -> str:
 
 def _record(
     db: Session, scan: Scan, counts: dict[str, int], seen: set, rules: dict[str, RuleDoc], *, branch: str, path: str,
-    line: int, rule_id: str, sc: str, impact: str, snippet: str, message: str, detector: str,
+    line: int, rule_id: str, sc: str, impact: str, snippet: str, message: str, detector: str, s: Settings,
 ) -> None:
     key = (rule_id, path, line)
-    if key in seen:
+    if key in seen or not app_settings.keep(s, rule_id, impact):
         return
     seen.add(key)
     doc = rules.get(sc)
@@ -104,29 +104,34 @@ async def scan_repo(db: Session, scan: Scan, s: Settings, counts: dict[str, int]
         static[path] = analyze(files[path])
         for f in static[path]:
             _record(db, scan, counts, seen, rules, branch=branch, path=path, line=f.line, rule_id=f.rule_id, sc=f.wcag_sc,
-                    impact=f.impact, snippet=f.snippet, message=f.message, detector="static")
+                    impact=f.impact, snippet=f.snippet, message=f.message, detector="static", s=s)
     pipeline.emit(db, scan.id, "diagnosing", f"static checks done on {len(paths)} file(s): {sum(counts.values())} issue(s)")
 
-    if not s.openai_api_key:
-        pipeline.emit(db, scan.id, "diagnosing", "OpenAI review skipped: set OPENAI_API_KEY to add it")
+    if not (s.openai_api_key and (s.ai_review or s.ai_fixes)):
+        pipeline.emit(db, scan.id, "diagnosing", pipeline.ai_skip_reason(s, "review"))
         return
     client = source_llm.make_client(s)
     rules_text = rule_lookup.prompt_context(db)
-    review_files = {p: files[p] for p in paths[: s.source_llm_max_files]}
-    pipeline.emit(db, scan.id, "diagnosing", f"OpenAI is reviewing {len(review_files)} file(s) against the saved W3C rules")
-    try:
-        issues = await source_llm.review(
-            s, rules_text, review_files, static, client,
-            on_note=lambda m: pipeline.emit(db, scan.id, "diagnosing", m),
-        )
-    except Exception as e:  # the review is an extra: never fail the scan over it
-        pipeline.emit(db, scan.id, "diagnosing", f"OpenAI review skipped ({type(e).__name__})")
-        issues = []
+    issues = []
+    if s.ai_review:
+        review_files = {p: files[p] for p in paths[: s.source_llm_max_files]}
+        pipeline.emit(db, scan.id, "diagnosing", f"OpenAI is reviewing {len(review_files)} file(s) against the saved W3C rules")
+        try:
+            issues = await source_llm.review(
+                s, rules_text, review_files, static, client,
+                on_note=lambda m: pipeline.emit(db, scan.id, "diagnosing", m),
+            )
+        except Exception as e:  # the review is an extra: never fail the scan over it
+            pipeline.emit(db, scan.id, "diagnosing", f"OpenAI review skipped ({type(e).__name__})")
+            issues = []
+    else:
+        pipeline.emit(db, scan.id, "diagnosing", pipeline.ai_skip_reason(s, "review"))
     for i in issues:
         lines = files[i.file].split("\n")
         _record(db, scan, counts, seen, rules, branch=branch, path=i.file, line=i.line, rule_id=i.rule_id, sc=i.wcag_sc,
-                impact=i.impact, snippet=lines[i.line - 1].strip()[:300], message=i.problem, detector="llm")
-    await fix_source(db, scan, s, rules_text, files, client)
+                impact=i.impact, snippet=lines[i.line - 1].strip()[:300], message=i.problem, detector="llm", s=s)
+    if s.ai_fixes:
+        await fix_source(db, scan, s, rules_text, files, client)
 
 
 async def fix_source(db: Session, scan: Scan, s: Settings, rules_text: str, files: dict[str, str], client) -> None:

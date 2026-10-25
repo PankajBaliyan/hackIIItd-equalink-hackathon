@@ -313,3 +313,61 @@ def detail_fixes(scan):
 
     with Session(db.engine()) as s:
         return routes_scans.get_scan(scan.id, s)["fixes"]
+
+
+# --- settings changed in the dashboard ---------------------------------------------------------------------------
+
+
+def save_setting(key, value):
+    from app.models import AppSetting
+
+    with Session(db.engine()) as s:
+        s.merge(AppSetting(key=key, value=json.dumps(value)))
+        s.commit()
+
+
+def fix_calls(fake):
+    return [c for c in fake.calls if c["response_format"]["json_schema"]["name"] == "fixes"]
+
+
+def test_disabled_rules_apply_to_repo_scans(env):
+    save_setting("disabled_rules", "label")
+    _, issues, _ = run(env, github()[0])
+    rules = {i["rule_id"] for i in issues}
+    assert "label" not in rules and {"image-alt", "link-name"} <= rules
+
+
+def test_minimum_severity_applies_to_repo_scans(env):
+    save_setting("min_severity", "critical")
+    _, issues, _ = run(env, github()[0])
+    assert issues and {i["impact"] for i in issues} == {"critical"}
+
+
+def test_ai_review_switch_skips_the_review_but_still_proposes_fixes(env):
+    save_setting("ai_review", False)
+    fake = FakeClaude({"issues": [{"file": "src/Form.tsx", "line": 4, "rule_id": "x-y", "wcag_sc": "3.3.1", "impact": "serious", "problem": "p"}]},
+                      fixes=[fx("image-alt", 6, 6, '      <img src="/logo.png" alt="Logo" />')])
+    with_claude(env, fake)
+    scan, issues, events = run(env, github()[0])
+    assert not any(i["detector"] == "llm" for i in issues)
+    assert not [c for c in fake.calls if c["response_format"]["json_schema"]["name"] != "fixes"]
+    assert any("OpenAI review skipped: turned off in Settings" in e for e in events)
+    assert len(fix_calls(fake)) == 2  # one request per file that has findings (Form.tsx, index.html)
+
+
+def test_ai_fixes_switch_skips_the_fix_stage_but_still_reviews(env):
+    save_setting("ai_fixes", False)
+    fake = FakeClaude({"issues": []}, fixes=[fx("image-alt", 6, 6, '<img src="/logo.png" alt="Logo" />')])
+    with_claude(env, fake)
+    scan, _, _ = run(env, github()[0])
+    assert fix_calls(fake) == [] and len(fake.calls) >= 1 and scan.status == "done"
+    assert detail_fixes(scan) == [] and scan.score_after is None
+
+
+def test_both_switches_off_makes_no_openai_calls(env):
+    save_setting("ai_review", False)
+    save_setting("ai_fixes", False)
+    fake = FakeClaude({"issues": []})
+    with_claude(env, fake)
+    scan, _, events = run(env, github()[0])
+    assert fake.calls == [] and scan.status == "done" and any("turned off in Settings" in e for e in events)

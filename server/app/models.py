@@ -96,6 +96,15 @@ class IssueRow(SQLModel, table=True):
     box: str | None = None  # page scans: "x,y,w,h" in percent of the page screenshot, where the element sits
 
 
+class AppSetting(SQLModel, table=True):
+    """A setting changed in the dashboard. It overrides the environment default; deleting the row restores it."""
+
+    __tablename__ = "app_setting"
+
+    key: str = Field(primary_key=True)
+    value: str  # JSON
+
+
 class ShotRow(SQLModel, table=True):
     """A screenshot of one scanned page (JPEG bytes) so findings can be shown where they are."""
 

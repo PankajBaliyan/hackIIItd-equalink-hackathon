@@ -1,6 +1,6 @@
 import { Link, useNavigate } from "@tanstack/react-router";
 import { Check, Github, X } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import { toast } from "sonner";
 
@@ -12,7 +12,7 @@ import { TextField } from "@/components/ui/text-field";
 import type { Scan } from "@/lib/types";
 import { useGithub } from "@/lib/useGithub";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { sitesApi } from "@/lib/api";
+import { settingsApi, sitesApi } from "@/lib/api";
 import { useScanStore } from "@/state/scanStore";
 
 /** Returns a normalized http(s) URL, or an error message. Bare domains get https://. */
@@ -59,6 +59,19 @@ export function ScanForm({
   const { data: gh } = useGithub();
   const { data: sites } = useQuery({ queryKey: ["sites"], queryFn: sitesApi.list, retry: false });
   const suggestions = gh?.connected ? gh.repos.filter((r) => r.enabled) : [];
+
+  // Start from the level and scope saved in Settings, unless the person already picked one here.
+  const { data: saved } = useQuery({
+    queryKey: ["settings"],
+    queryFn: settingsApi.get,
+    retry: false,
+  });
+  const picked = useRef({ level: false, scope: false });
+  useEffect(() => {
+    if (!saved) return;
+    if (!picked.current.level) setLevel(saved.values.default_level);
+    if (!picked.current.scope) setScope(saved.values.default_scope);
+  }, [saved]);
 
   const repoConnected = repo.trim() !== "" && REPO_RE.test(repo.trim());
 
@@ -171,7 +184,10 @@ export function ScanForm({
           <SegmentedControl
             label="WCAG level"
             value={level}
-            onValueChange={setLevel}
+            onValueChange={(v) => {
+              picked.current.level = true;
+              setLevel(v);
+            }}
             options={[
               { value: "A", label: "A" },
               { value: "AA", label: "AA" },
@@ -181,7 +197,10 @@ export function ScanForm({
           <SegmentedControl
             label="Scope"
             value={scope}
-            onValueChange={setScope}
+            onValueChange={(v) => {
+              picked.current.scope = true;
+              setScope(v);
+            }}
             options={[
               { value: "page", label: "Single page" },
               { value: "site", label: "Full site" },

@@ -23,7 +23,7 @@ from playwright.async_api import Error as PlaywrightError
 from playwright.async_api import Browser, Page, Playwright, async_playwright
 from sqlmodel import Session, select
 
-from app import fixer, page_llm, rule_lookup, screenshots, source_llm, tinyfish_browser
+from app import app_settings, fixer, page_llm, rule_lookup, screenshots, source_llm, tinyfish_browser
 from app.config import Settings, get_settings
 from app.db import engine
 from app.models import EventRow, FixRow, IssueRow, RuleDoc, Scan
@@ -319,7 +319,7 @@ async def crawl(
 ) -> None:
     """Render the page(s) in the scan's engine and store the axe violations. `counts` and `seen` survive a retry."""
     scan_id = scan.id
-    client = source_llm.make_client(s) if s.openai_api_key else None
+    client = source_llm.make_client(s) if s.openai_api_key and (s.ai_review or s.ai_fixes) else None
     rules_text = rule_lookup.prompt_context(db) if client else ""
     async with async_playwright() as pw, open_page(pw, db, scan, s) as page:
         emit(db, scan_id, "crawling", f"rendering {scan.url} in the {'TinyFish' if scan.engine == 'tinyfish' else 'local'} browser")
@@ -366,6 +366,8 @@ async def crawl(
             axe_found: list[tuple[str, str]] = []
             for v in result["violations"]:
                 impact = v.get("impact") or "minor"
+                if not app_settings.keep(s, v["id"], impact):
+                    continue
                 for node in v["nodes"][:MAX_NODES_PER_RULE]:
                     selector = " ".join(node["target"][0]) if isinstance(node["target"][0], list) else node["target"][0]
                     key = (v["id"], selector, url)
@@ -388,15 +390,22 @@ async def crawl(
                         f"{v['id']} (WCAG {row.wcag_sc}) {selector}",
                         "issue", counters=dict(counts), issue=issue_dict(row, doc),
                     )
-            if client:
+            if client and s.ai_review:
                 await llm_review(db, scan, s, counts, seen, rules, rules_text, page, url, axe_found, client)
             await take_screenshot(db, scan_id, s, page, url)
-            if not client and n == 1:
-                emit(db, scan_id, "diagnosing", "OpenAI review skipped: set OPENAI_API_KEY to add it (axe-core results only)")
+            if n == 1 and not (client and s.ai_review):
+                emit(db, scan_id, "diagnosing", ai_skip_reason(s, "review") + " (axe-core results only)")
         if overflow:
             emit(db, scan_id, "diagnosing", f"page limit reached: {len(overflow)} more page(s) were found but not scanned (raise MAX_SITE_PAGES)")
-        if client:
+        if client and s.ai_fixes:
             await fix_site(db, scan, s, rules_text, page, visited, client)
+
+
+def ai_skip_reason(s: Settings, what: str) -> str:
+    """Why an OpenAI stage didn't run, so the log says what to change."""
+    if not s.openai_api_key:
+        return f"OpenAI {what} skipped: set OPENAI_API_KEY to add it"
+    return f"OpenAI {what} skipped: turned off in Settings"
 
 
 async def take_screenshot(db: Session, scan_id: str, s: Settings, page: Page, url: str) -> None:
@@ -508,7 +517,7 @@ async def llm_review(
         return
     for i in issues:
         key = (i.rule_id, i.selector, url)
-        if key in seen:
+        if key in seen or not app_settings.keep(s, i.rule_id, i.impact):
             continue
         seen.add(key)
         doc = rules.get(i.wcag_sc)
@@ -527,7 +536,7 @@ async def llm_review(
 
 
 async def run_scan(scan_id: str) -> None:
-    s = get_settings()
+    s = app_settings.effective(get_settings())  # the environment defaults plus whatever was changed in Settings
     with Session(engine()) as db:
         scan = db.get(Scan, scan_id)
         if not scan:
@@ -566,7 +575,7 @@ async def run_scan(scan_id: str) -> None:
                 emit(db, scan_id, "diagnosing", f"{matched} of {total} issue(s) matched a saved W3C rule")
             scan.score_before = score(counts)
             fixes = db.exec(select(FixRow).where(FixRow.scan_id == scan_id)).all()
-            if s.openai_api_key:
+            if s.openai_api_key and s.ai_fixes:
                 scan.score_after = fix_score(db, scan, counts)
                 good = sum(1 for f in fixes if f.validated)
                 emit(
@@ -577,7 +586,9 @@ async def run_scan(scan_id: str) -> None:
             else:
                 emit(
                     db, scan_id, "diagnosing",
-                    f"score {scan.score_before}. {total} issue(s) found; set OPENAI_API_KEY to get proposed fixes, so they are left for human review",
+                    f"score {scan.score_before}. {total} issue(s) found; "
+                    + ("fixes are turned off in Settings" if s.openai_api_key else "set OPENAI_API_KEY to get proposed fixes")
+                    + ", so they are left for human review",
                 )
             set_status(db, scan, "done")
             emit(db, scan_id, "done", f"scan complete: {total} issue(s)", counters=dict(counts))

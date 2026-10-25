@@ -713,3 +713,101 @@ def test_reveal_lazy_content_stops_on_a_page_that_never_ends(monkeypatch):
             return h
 
     assert asyncio.run(go()) < 1000 * 12  # bounded by the step cap, not endless
+
+
+# --- settings changed in the dashboard take effect on the next scan ---------------------------------------------
+
+
+def save_setting(key, value):
+    from app.models import AppSetting
+
+    with Session(db.engine()) as s:
+        s.merge(AppSetting(key=key, value=json.dumps(value)))
+        s.commit()
+
+
+def stored_issues():
+    with Session(db.engine()) as s:
+        return s.exec(select(IssueRow)).all()
+
+
+def test_disabled_rules_are_not_recorded(env, multi_site):
+    save_setting("disabled_rules", "image-alt")
+    sid = new_scan(multi_site, "local")
+    asyncio.run(pipeline.run_scan(sid))
+    rules = {i.rule_id for i in stored_issues()}
+    assert "image-alt" not in rules and "target-size" in rules  # only the disabled rule is gone
+
+
+def test_minimum_severity_drops_milder_issues(env, multi_site):
+    sid = new_scan(multi_site, "local")
+    asyncio.run(pipeline.run_scan(sid))
+    all_impacts = {i.impact for i in stored_issues()}
+    assert {"critical", "serious"} <= all_impacts  # the missing alt is critical, the tiny link targets serious
+    with Session(db.engine()) as s:
+        for i in stored_issues():
+            s.delete(s.get(IssueRow, i.id))
+        s.commit()
+    save_setting("min_severity", "critical")
+    asyncio.run(pipeline.run_scan(sid))
+    assert {i.impact for i in stored_issues()} == {"critical"}
+
+
+def test_ai_review_switch_skips_the_page_review_but_keeps_fixes(env, site):
+    with_openai(env, FakeOpenAI([llm_issue("main")], fixes={"image-alt": '<img src="x.png" alt="A red square">'}))
+    save_setting("ai_review", False)
+    sid = new_scan(site, "local")
+    asyncio.run(pipeline.run_scan(sid))
+    _, _, messages = result()
+    assert not any(i.detector == "llm" for i in stored_issues())
+    assert any("OpenAI review skipped: turned off in Settings" in m for m in messages)
+    assert fixes_of()[0]["image-alt"]["validated"] is True
+
+
+def test_ai_fixes_switch_skips_the_fix_stage_and_the_after_score(env, site):
+    fake = FakeOpenAI([llm_issue("main")], fixes={"image-alt": '<img src="x.png" alt="A red square">'})
+    with_openai(env, fake)
+    save_setting("ai_fixes", False)
+    sid = new_scan(site, "local")
+    asyncio.run(pipeline.run_scan(sid))
+    scan, _, messages = result()
+    fixes, detail = fixes_of()
+    assert fixes == {} and scan.score_after is None
+    assert any(i.detector == "llm" for i in stored_issues())  # the review still ran
+    assert not any(c["response_format"]["json_schema"]["name"] == "fixes" for c in fake.calls)
+    assert any("fixes are turned off in Settings" in m for m in messages)
+
+
+def test_both_ai_switches_off_makes_no_openai_calls(env, site):
+    fake = FakeOpenAI([llm_issue("main")])
+    with_openai(env, fake)
+    save_setting("ai_review", False)
+    save_setting("ai_fixes", False)
+    sid = new_scan(site, "local")
+    asyncio.run(pipeline.run_scan(sid))
+    assert fake.calls == [] and result()[0].status == "done"
+
+
+def test_page_limit_from_settings_is_used(env, multi_site):
+    save_setting("max_site_pages", 2)
+    asyncio.run(pipeline.run_scan(site_scan(url=multi_site)))
+    assert len(scanned_paths()) == 2
+    assert any("page limit reached" in m for m in result()[2])
+
+
+def test_model_from_settings_is_sent_to_openai(env, site):
+    fake = FakeOpenAI([])
+    with_openai(env, fake)
+    save_setting("openai_model", "gpt-4o-mini")
+    sid = new_scan(site, "local")
+    asyncio.run(pipeline.run_scan(sid))
+    assert fake.calls and {c["model"] for c in fake.calls} == {"gpt-4o-mini"}
+
+
+def test_fix_limit_from_settings_is_used(env, site):
+    fake = FakeOpenAI([], fixes={"image-alt": '<img src="x.png" alt="A red square">'})
+    with_openai(env, fake)
+    save_setting("fix_max", 0)
+    sid = new_scan(site, "local")
+    asyncio.run(pipeline.run_scan(sid))
+    assert fixes_of()[0] == {}

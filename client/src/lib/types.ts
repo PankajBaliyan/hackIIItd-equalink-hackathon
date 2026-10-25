@@ -139,6 +139,42 @@ export interface ScanApi {
   ): () => void;
 }
 
+/** Scan behaviour that can be changed in Settings; the server stores it and uses it for every new scan. */
+export interface SettingsValues {
+  default_level: Scan["level"];
+  default_scope: Scan["scope"];
+  max_site_pages: number;
+  fix_max: number;
+  openai_model: string;
+  min_severity: Severity;
+  disabled_rules: string[];
+  ai_review: boolean;
+  ai_fixes: boolean;
+}
+
+/** What the server was started with (server/.env). Only whether a key is set, never the key. */
+export interface ServerInfo {
+  openai: { configured: boolean; model: string };
+  tinyfish: { configured: boolean };
+  github: { mode: "oauth" | "none" };
+  scan_engine: "auto" | "tinyfish" | "local";
+  allow_private_targets: boolean;
+  screenshot_max_height: number;
+  fix_batch: number;
+  source_max_files: number;
+  source_llm_max_files: number;
+  w3c_sync: { schedule: boolean; interval_days: number };
+}
+
+export interface SettingsResponse {
+  values: SettingsValues;
+  /** The server's own defaults, which a reset goes back to. */
+  defaults: SettingsValues;
+  /** The keys that differ from the defaults. */
+  changed: (keyof SettingsValues)[];
+  server: ServerInfo;
+}
+
 /** A tracked website, stored by the server. */
 export interface Site {
   id: number;

@@ -278,26 +278,29 @@ Done:
 ===================================================================================
 Module === Settings
 
-Working and dynamic: theme and reduce-motion (kept in this browser), read-only API URL and live / mock mode.
+Working and dynamic: everything on the page. Scan settings and the server's configuration come from the server;
+theme, reduce-motion and the API connection are kept in this browser.
 
-1. [Med] Hardcoded, out-of-date text.
-   The GitHub section always says "Not connected. GitHub App installation arrives with the backend integration",
-   even when GitHub is connected (the connection is managed on the GitHub page). (client/src/routes/settings.tsx)
-
-2. [Med] The page does not configure anything about scanning.
-   The nav says "Configure rules, severity thresholds and agent behaviour". There is no settings API or table: default
-   WCAG level and scope, max pages, fix limit, severity threshold, disabled rules, OpenAI model are env-only.
-
-3. [Med] No view of the server's configuration.
-   You can't see which keys are set (OpenAI, TinyFish, GitHub mode), the scan engine, or ALLOW_PRIVATE_TARGETS, so
-   "why were no fixes generated?" has no answer in the UI. GET /health only returns github_mode.
-
-4. [Low] API base URL and mock mode are build-time env values (VITE_*), shown read-only.
+Nothing pending in this module.
 
 Done:
+- Hardcoded GitHub text replaced: the Server section shows the real state ("Connected as <account>" + Manage, or
+  "Not connected" + Connect, and whether sign-in is configured on the server). (client/src/routes/settings.tsx)
+- The page now configures scanning. New table `app_setting` + GET / PATCH / DELETE /settings (server/app/
+  app_settings.py, routes_settings.py). Saved in the database, they override server/.env for every scan started
+  afterwards: default WCAG level and scope (also prefill the New Scan form), pages per full-site scan, fixes per
+  scan, OpenAI model, minimum severity to report, rules to skip, and switches for AI review and AI fixes.
+  Values are validated server-side (readable 422 messages) and client-side; "Reset to server defaults" and null
+  in a PATCH restore the .env value. Rules to skip / minimum severity apply to axe, AI and repo-source findings.
+- The server's configuration is visible (Settings > Server, GET /settings, GET /health): which keys are set
+  (never the keys), scan engine, private addresses, screenshot height, repo-scan limits, W3C sync, and a clear
+  notice on the AI section when OPENAI_API_KEY is missing ("why no fixes?"). The scan log now also says when an
+  AI stage was skipped because it is turned off in Settings.
+- API base URL and demo-data mode can be changed from Settings > API connection (saved in this browser, page
+  reloads), instead of being build-time only. (client/src/lib/api.ts: connectionOverride)
+  Not covered: secrets and deployment settings (keys, ports, ALLOW_PRIVATE_TARGETS) stay in server/.env on
+  purpose; settings are global for the whole server (there are no users, see Cross-cutting 1).
 
-===================================================================================
-===================================================================================
 Module === Docs
 
 Working and dynamic: the Reference documents tab (documents in the database, W3C sync status and "Sync now", import,

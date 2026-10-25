@@ -10,7 +10,7 @@ from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
-from app import pipeline, tinyfish_browser
+from app import app_settings, pipeline, tinyfish_browser
 from app.config import Settings, get_settings
 from app.db import engine, get_session
 from app.models import EventRow, FixRow, IssueRow, RuleDoc, Scan, ShotRow
@@ -26,8 +26,8 @@ class ScanIn(BaseModel):
     url: str | None = None  # a site scan needs it; a repo scan takes the repo instead
     repo: str | None = None
     target: Literal["site", "repo"] = "site"  # "repo": scan the repo's source code instead of a rendered page
-    level: Literal["A", "AA", "AAA"] = "AA"
-    scope: Literal["page", "site"] = "page"
+    level: Literal["A", "AA", "AAA"] | None = None  # omitted: the default chosen in Settings
+    scope: Literal["page", "site"] | None = None
     auto_ship: bool = False
 
 
@@ -51,6 +51,7 @@ def scan_out(s: Scan) -> dict:
 
 @router.post("", status_code=201)
 async def create_scan(body: ScanIn, db: SessionDep, settings: SettingsDep):
+    eff = app_settings.effective(settings, db)
     repo = (body.repo or "").strip() or None
     if repo and not REPO_RE.match(repo):
         raise HTTPException(422, "Repository must look like owner/repo.")
@@ -66,7 +67,7 @@ async def create_scan(body: ScanIn, db: SessionDep, settings: SettingsDep):
         mode, engine = "repo" if repo else "url", tinyfish_browser.choose_engine(settings, url)
     scan = Scan(
         id=f"scan_{secrets.token_hex(4)}", url=url, mode=mode,
-        level=body.level, scope=body.scope, repo=repo, engine=engine,
+        level=body.level or eff.default_level, scope=body.scope or eff.default_scope, repo=repo, engine=engine,
     )
     db.add(scan)
     db.commit()

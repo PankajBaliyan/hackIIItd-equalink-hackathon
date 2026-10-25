@@ -11,6 +11,7 @@ from app.db import fail_orphaned_scans, init_db
 from app.routes_github import router as github_router
 from app.routes_rule_docs import router as rule_docs_router
 from app.routes_scans import router as scans_router
+from app.routes_settings import router as settings_router
 from app.routes_sites import router as sites_router
 
 
@@ -37,8 +38,13 @@ app.include_router(github_router)
 app.include_router(sites_router)
 app.include_router(rule_docs_router)
 app.include_router(scans_router)
+app.include_router(settings_router)
 
 
 @app.get("/health")
 def health():
-    return {"ok": True, "github_mode": get_settings().github_mode}
+    s = get_settings()
+    return {
+        "ok": True, "github_mode": s.github_mode, "openai": bool(s.openai_api_key),
+        "tinyfish": bool(s.tinyfish_api_key), "scan_engine": s.scan_engine,
+    }
