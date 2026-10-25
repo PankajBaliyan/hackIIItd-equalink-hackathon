@@ -1,0 +1,115 @@
+Pending Points:
+
+===================================================================================
+===================================================================================
+
+Module === Scan Now
+
+1. "Auto-open PR when done" does nothing.
+   auto_ship is sent by the form and accepted by ScanIn, but nothing reads it.
+   POST /scans/{id}/ship returns a hardcoded 501: "Opening pull requests isn't implemented yet."
+   (server/app/routes_scans.py)
+
+2. The TrustStrip claims are not true yet.
+   "every fix is a PR" is not true until PRs are built (item 1). "axe-core re-checks every fix" is now true for page scans.
+   (client/src/components/scan/TrustStrip.tsx)
+
+3. Private-address blocking is off by default.
+   ALLOW_PRIVATE_TARGETS=true, so it must be set to false for a deployed server (SSRF protection).
+   (server/.env.example, server/app/pipeline.py: check_target)
+
+
+Done:
+- Website scans were axe-only. They now also get an OpenAI review of the rendered page when OPENAI_API_KEY
+  is set, and fall back to axe-only without a key or if the review fails. (server/app/page_llm.py)
+- Fix generation and verification (server/app/fixer.py). Axe issues on pages get an OpenAI-proposed patch that is
+  checked by re-running axe-core on the live DOM; static findings in repo scans are checked by re-running the static
+  rules on the patched file. Needs OPENAI_API_KEY; without it issues are left for human review.
+  Still not covered: issues found by the OpenAI review (not re-checkable), html/body-level issues, and fixes that
+  overlap each other in one file (relevant when PRs are built).
+- Full-site crawl (server/app/pipeline.py). scope=site now crawls breadth-first, following same-origin links on
+  every scanned page, up to MAX_SITE_PAGES (default 20, was 5). A page that fails to load is skipped (fresh browser
+  tab) instead of failing the scan, and pages beyond the limit are reported in the scan log.
+  Still sequential (one page at a time), so large limits make slow scans; no sitemap.xml or robots.txt handling.
+- Submit button label. It said "Scan with TinyFish" even when the scan fell back to local Chromium. It now says
+  "Scan website"; the engine actually used is shown on the live scan page (TinyFish browser / Local browser chip).
+
+
+===================================================================================
+===================================================================================
+Module === Live Scan
+
+Working and dynamic: header chips (incl. engine used), stepper/status, live SSE agent log with reconnect +
+polling fallback, severity counters, elapsed timer, pages list, sidebar link to the latest scan.
+
+1. The log can duplicate after a reconnect.
+   The retry creates a new EventSource, which loses Last-Event-ID, so the server replays all events, and the
+   store appends events without checking for duplicates.
+   (client/src/lib/sse.ts: connect, client/src/state/scanStore.tsx: reducer "event")
+
+2. The "Scan complete" banner is always the same.
+   It says "fixes are ready to review" even when there are none (no OPENAI_API_KEY, or all rejected).
+   It should use the real fix counts. (client/src/components/scan/LiveScan.tsx)
+
+3. The screenshot panel is a placeholder.
+   AnnotatedScreenshot is never given an image or boxes and the backend captures no screenshots.
+   (client/src/components/scan/AnnotatedScreenshot.tsx, server/app/pipeline.py)
+
+4. The score ring only shows score_before.
+   The server computes the score at the end of the scan, so the ring stays "-" until then. score_after is
+   not shown on this page. (client/src/components/scan/LiveScan.tsx, server/app/pipeline.py: run_scan)
+
+5. "Pipeline progress" is a stage estimate, not real progress.
+   Stage index / 6, capped at 95%. No "page 3 of 12" detail, and "N pages with issues" does not say how many
+   pages were scanned. (client/src/components/scan/LiveScan.tsx)
+
+6. The "Shipping" step in the stepper is never reached (PRs are not built, see Scan Now item 1).
+
+7. Minor: with zero scans the sidebar Live Scan / Fixes links fall back to the hardcoded id "demo" and open
+   "Couldn't load this scan". (client/src/lib/nav.ts: DEMO_SCAN_ID, client/src/components/shell/AppShell.tsx)
+
+Done:
+- Finished or failed scans now open with their stored log. New GET /scans/{id}/log returns the events as JSON and
+  the store loads it for a scan that is already over, so the log, elapsed timer and the stepper stage (the stage a
+  failed scan stopped in) are right. scan.error is now returned by the API and shown in the "Scan failed" banner.
+  A scan with no recorded log says so instead of "Waiting for the agent...". (server/app/routes_scans.py,
+  client/src/state/scanStore.tsx, client/src/components/scan/LiveScan.tsx)
+
+
+===================================================================================
+===================================================================================
+
+Module === Fixes
+
+===================================================================================
+===================================================================================
+Module === Pull Requests
+
+===================================================================================
+===================================================================================
+Module === Scan History
+
+===================================================================================
+===================================================================================
+Module === Reports
+
+===================================================================================
+===================================================================================
+Module === Sites
+
+===================================================================================
+===================================================================================
+Module === Github
+
+===================================================================================
+===================================================================================
+Module === CI/CD
+
+
+===================================================================================
+===================================================================================
+Module === Settings
+
+===================================================================================
+===================================================================================
+Module === Docs

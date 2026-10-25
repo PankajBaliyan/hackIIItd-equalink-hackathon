@@ -14,6 +14,8 @@ export interface Scan {
   status: Stage;
   score_before?: number;
   score_after?: number;
+  /** Why a failed scan failed. */
+  error?: string;
   created_at: string;
 }
 
@@ -110,6 +112,8 @@ export interface ScanApi {
   createScan(input: CreateScanInput): Promise<Scan>;
   listScans(): Promise<Scan[]>;
   getScan(id: string): Promise<ScanDetail>;
+  /** The stored event log, for opening a scan that already finished. */
+  getEvents(id: string): Promise<ScanEvent[]>;
   ship(id: string, fixIds?: string[]): Promise<PullRequest>;
   getGithub(): Promise<GithubStatus>;
   connectGithub(): Promise<GithubStatus>;

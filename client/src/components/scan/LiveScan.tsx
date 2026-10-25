@@ -90,10 +90,12 @@ export function LiveScan({ id }: { id: string }) {
     );
   }
 
+  // A failed scan stops on the stage it was in when it failed: the last event before the "failed" one.
+  const lastStage = s.events.filter((e) => e.stage !== "failed").at(-1)?.stage;
   const current = failed
     ? Math.max(
         0,
-        STAGES.findIndex((x) => x.id === s.events.at(-2)?.stage),
+        STAGES.findIndex((x) => x.id === lastStage),
       )
     : STAGES.findIndex((x) => x.id === scan.status);
   const pageProgress = done
@@ -152,7 +154,9 @@ export function LiveScan({ id }: { id: string }) {
           <AlertTriangle aria-hidden className="size-5 text-critical" />
           <p>
             <strong>Scan failed.</strong>{" "}
-            <span className="text-muted">Check the log below, then start a new scan.</span>
+            <span className="text-muted">
+              {scan.error ? `${scan.error} ` : ""}Check the log below, then start a new scan.
+            </span>
           </p>
         </div>
       )}
@@ -200,7 +204,7 @@ export function LiveScan({ id }: { id: string }) {
         </div>
       </section>
 
-      <TerminalFeed events={s.events} />
+      <TerminalFeed events={s.events} finished={done || failed} />
 
       <section aria-labelledby="pages-title" className="grid gap-4 md:grid-cols-2">
         <div className="space-y-2">

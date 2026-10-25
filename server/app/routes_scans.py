@@ -44,6 +44,8 @@ def scan_out(s: Scan) -> dict:
         out["score_before"] = s.score_before
     if s.score_after is not None:
         out["score_after"] = s.score_after
+    if s.error:
+        out["error"] = s.error
     return out
 
 
@@ -91,6 +93,15 @@ def get_scan(scan_id: str, db: SessionDep):
         "scan": scan_out(scan), "issues": [pipeline.issue_dict(i, docs.get(i.rule_doc_id)) for i in issues],
         "fixes": [pipeline.fix_dict(f) for f in fixes],
     }
+
+
+@router.get("/{scan_id}/log")
+def get_log(scan_id: str, db: SessionDep):
+    """Every event of the scan so far as plain JSON, for opening a scan that already finished."""
+    if not db.get(Scan, scan_id):
+        raise HTTPException(404, "Scan not found.")
+    rows = db.exec(select(EventRow).where(EventRow.scan_id == scan_id).order_by(EventRow.id)).all()  # type: ignore[arg-type]
+    return [json.loads(r.payload) for r in rows]
 
 
 @router.post("/{scan_id}/ship")

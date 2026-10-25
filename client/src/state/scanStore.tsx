@@ -40,6 +40,7 @@ type Action =
   | { type: "scan"; scan: Scan }
   | { type: "detail"; scan: Scan; issues: Issue[]; fixes: Fix[]; pr?: PullRequest }
   | { type: "event"; event: ScanEvent }
+  | { type: "log"; events: ScanEvent[] }
   | { type: "connection"; connection: ConnectionState }
   | { type: "pr"; pr: PullRequest }
   | { type: "error"; error: string };
@@ -85,6 +86,8 @@ function reducer(state: ScanState, a: Action): ScanState {
         scan: state.scan ? { ...state.scan, status: e.stage } : state.scan,
       };
     }
+    case "log":
+      return { ...state, events: a.events };
     case "connection":
       return { ...state, connection: a.connection };
     case "pr":
@@ -149,7 +152,12 @@ export function ScanStoreProvider({ children }: { children: ReactNode }) {
         .then((api) => api.getScan(id))
         .then((d) => {
           dispatch({ type: "detail", ...d });
-          if (d.scan.status !== "done" && d.scan.status !== "failed") void stream(id);
+          if (d.scan.status !== "done" && d.scan.status !== "failed") return stream(id);
+          // Already finished: nothing will stream, so load the stored log instead.
+          return getApi()
+            .then((api) => api.getEvents(id))
+            .then((events) => dispatch({ type: "log", events }))
+            .catch(() => undefined); // the scan still renders without its log
         })
         .catch((e: unknown) =>
           dispatch({ type: "error", error: e instanceof Error ? e.message : String(e) }),

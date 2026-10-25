@@ -1,4 +1,6 @@
+import json
 from collections.abc import Iterator
+from datetime import datetime, timezone
 
 from sqlalchemy import inspect, text
 from sqlmodel import Session, SQLModel, create_engine, select
@@ -56,5 +58,6 @@ def fail_orphaned_scans() -> None:
         for scan in db.exec(select(Scan).where(Scan.status.notin_(["done", "failed"]))).all():  # type: ignore[attr-defined]
             scan.status, scan.error = "failed", "Server restarted during the scan."
             db.add(scan)
-            db.add(EventRow(scan_id=scan.id, payload='{"stage":"failed","type":"info","ts":"","message":"scan failed: server restarted"}'))
+            ts = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+            db.add(EventRow(scan_id=scan.id, payload=json.dumps({"stage": "failed", "type": "info", "ts": ts, "message": "scan failed: server restarted"})))
         db.commit()

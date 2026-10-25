@@ -51,6 +51,7 @@ export const realApi: ScanApi = {
     request<Scan>("/scans", { method: "POST", body: JSON.stringify(input) }),
   listScans: () => request<Scan[]>("/scans"),
   getScan: (id) => request<ScanDetail>(`/scans/${id}`),
+  getEvents: (id) => request<ScanEvent[]>(`/scans/${id}/log`),
   ship: (id, fixIds) =>
     request<PullRequest>(`/scans/${id}/ship`, {
       method: "POST",

@@ -242,6 +242,10 @@ export const mockApi: ScanApi = {
     return detail;
   },
 
+  async getEvents(id) {
+    return [...(running.get(id)?.buffer ?? [])];
+  },
+
   async ship(id, fixIds) {
     await delay(1500);
     const scan = scans.get(id);
