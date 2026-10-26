@@ -11,7 +11,7 @@ from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, Field
 from sqlmodel import Session, select
 
-from app import app_settings, github, pipeline, shipping, tinyfish_browser
+from app import app_settings, pipeline, pull_requests, tinyfish_browser
 from app.config import Settings, get_settings
 from app.db import engine, get_session
 from app.models import EventRow, FixRow, IssueRow, PullRow, RuleDoc, Scan, ShotRow
@@ -29,7 +29,7 @@ class ScanIn(BaseModel):
     target: Literal["site", "repo"] = "site"  # "repo": scan the repo's source code instead of a rendered page
     level: Literal["A", "AA", "AAA"] | None = None  # omitted: the default chosen in Settings
     scope: Literal["page", "site"] | None = None
-    auto_ship: bool = False
+    auto_ship: bool = False  # open a pull request with the validated fixes once the scan is done (repository scans)
 
 
 class ShipIn(BaseModel):
@@ -97,6 +97,7 @@ async def create_scan(body: ScanIn, db: SessionDep, settings: SettingsDep):
     scan = Scan(
         id=f"scan_{secrets.token_hex(4)}", url=url, mode=mode,
         level=body.level or eff.default_level, scope=body.scope or eff.default_scope, repo=repo, engine=engine,
+        auto_ship=body.auto_ship and mode == "source",
     )
     db.add(scan)
     db.commit()
@@ -185,73 +186,7 @@ async def ship(scan_id: str, db: SessionDep, settings: SettingsDep, body: ShipIn
     if not scan.repo:
         raise HTTPException(422, "This scan has no GitHub repository. Scan a repository to open a pull request.")
 
-    fixes = db.exec(select(FixRow).where(FixRow.scan_id == scan_id)).all()
-    issues = {i.id: i for i in db.exec(select(IssueRow).where(IssueRow.scan_id == scan_id)).all()}
-    if body.fix_ids is not None:
-        by_id = {f.id: f for f in fixes}
-        if len(set(body.fix_ids)) != len(body.fix_ids) or any(i not in by_id for i in body.fix_ids):
-            raise HTTPException(422, "Select distinct fixes that belong to this scan.")
-        chosen = [by_id[i] for i in body.fix_ids]
-    else:
-        chosen = [f for f in fixes if f.validated and f.included]
-    if not chosen or any(not f.validated for f in chosen):
-        raise HTTPException(422, "Select at least one validated fix.")
-    if not any(issues.get(f.issue_id) and issues[f.issue_id].source_file for f in chosen):
-        raise HTTPException(
-            422, "These fixes patch a rendered page, not source files, so there is nothing to commit. Scan the repository itself to open a pull request.",
-        )
-
-    from app.routes_github import _repo_token
-
-    token = await _repo_token(settings, db, scan.repo)
-    branch = None
-    try:
-        base, base_sha = await github.branch_head(token, scan.repo)
-        paths = sorted({issues[f.issue_id].source_file for f in chosen if f.issue_id in issues and issues[f.issue_id].source_file})
-        files, blobs = {}, {}
-        for path in paths:
-            files[path], blobs[path] = await github.file_at(token, scan.repo, path, base_sha)
-        result = shipping.plan(files, chosen, issues)
-        if not result.edits:
-            why = "; ".join(sorted({reason for _, reason in result.skipped})) or "nothing to change"
-            raise HTTPException(409, f"None of the fixes could be applied: {why}.")
-        applied = [f for e in result.edits for f in e.applied]
-        branch = f"equalink/a11y-fixes-{scan_id}-{secrets.token_hex(2)}"
-        await github.create_branch(token, scan.repo, branch, base_sha)
-        for edit in result.edits:
-            await github.commit_file(
-                token, scan.repo, branch, edit.path, edit.text, blobs[edit.path],
-                f"fix(a11y): {len(edit.applied)} accessibility fix{'es' if len(edit.applied) != 1 else ''} in {edit.path}",
-            )
-        pull = await github.create_pull(
-            token, scan.repo, base, branch,
-            f"Fix {len(applied)} accessibility issue{'s' if len(applied) != 1 else ''} (EquaLink)",
-            shipping_body(scan, applied, issues, result.skipped), False,
-        )
-    except github.GitHubError as e:
-        if branch:
-            await github.delete_branch(token, scan.repo, branch)
-        raise HTTPException(502 if e.status >= 500 or e.status == 401 else (409 if e.status == 422 else e.status), e.message)
-    except HTTPException:
-        if branch:
-            await github.delete_branch(token, scan.repo, branch)
-        raise
-    row = PullRow(scan_id=scan_id, repo=scan.repo, branch=branch, number=pull["number"], url=pull["url"], fix_ids=json.dumps([f.id for f in applied]))
-    db.add(row)
-    db.commit()
-    return pr_out(row)
-
-
-def shipping_body(scan: Scan, applied: list[FixRow], issues: dict[str, IssueRow], skipped: list[tuple[FixRow, str]]) -> str:
-    score = f"Accessibility score: {scan.score_before} -> {scan.score_after}\n\n" if scan.score_before is not None and scan.score_after is not None else ""
-    lines = [f"## Accessibility fixes (WCAG {scan.level})", "", score + f"EquaLink scanned `{scan.repo}` and proposes {len(applied)} fix{'es' if len(applied) != 1 else ''}. Each one was re-checked with the same rules after the change.", "", "| Rule | WCAG | Location | What changed |", "| --- | --- | --- | --- |"]
-    for f in applied:
-        i = issues[f.issue_id]
-        lines.append(f"| `{i.rule_id}` | {i.wcag_sc} | `{i.source_file}:{f.start_line}` | {f.explanation.replace('|', '/')} |")
-    if skipped:
-        lines += ["", "Left out:"] + [f"- `{issues[f.issue_id].rule_id}`: {why}" for f, why in skipped if f.issue_id in issues]
-    lines += ["", "Automated checks cover only part of WCAG. Please review the diff and test keyboard and screen-reader behaviour before merging.", "", "_Opened by EquaLink. It never merges for you._"]
-    return "\n".join(lines)
+    return pr_out(await pull_requests.open_pull(db, settings, scan, body.fix_ids))
 
 
 @router.get("/{scan_id}/events")

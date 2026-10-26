@@ -1,7 +1,7 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { Check, Github, GitPullRequest, ShieldCheck } from "lucide-react";
 import { useEffect } from "react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 
 import { FocusHeading } from "@/components/shell/PagePlaceholder";
@@ -9,8 +9,8 @@ import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
+import { getApi } from "@/lib/api";
 import { useGithub, useGithubAction } from "@/lib/useGithub";
-import { useScanStore } from "@/state/scanStore";
 
 export const Route = createFileRoute("/integrations/github")({
   head: () => ({
@@ -44,7 +44,14 @@ function Page() {
     else toast.success("GitHub connected");
     void qc.invalidateQueries({ queryKey: ["github"] });
   }, [qc]);
-  const { pullRequests } = useScanStore();
+  const anyEnabled = !!data?.connected && data.repos.some((r) => r.enabled);
+  const pulls = useQuery({
+    queryKey: ["github-pulls", "all", ""],
+    enabled: anyEnabled,
+    retry: false,
+    queryFn: async () => (await getApi()).listGithubPulls("all"),
+  });
+  const recent = (pulls.data ?? []).slice(0, 5);
   const fail = (title: string) => (e: unknown) =>
     toast.error(title, { description: e instanceof Error ? e.message : undefined });
 
@@ -164,7 +171,23 @@ function Page() {
         <h2 id="gh-prs" className="text-xl">
           Recent pull requests
         </h2>
-        {pullRequests.length === 0 ? (
+        {!anyEnabled ? (
+          <p className="flex items-center gap-2 text-sm text-muted">
+            <GitPullRequest aria-hidden className="size-4" /> Turn on a repository to see its pull
+            requests.
+          </p>
+        ) : pulls.isPending ? (
+          <Skeleton
+            role="status"
+            aria-label="Loading pull requests"
+            className="h-24 w-full rounded-card"
+          />
+        ) : pulls.isError ? (
+          <p role="alert" className="text-sm text-critical">
+            Couldn't load pull requests:{" "}
+            {pulls.error instanceof Error ? pulls.error.message : "try again"}
+          </p>
+        ) : recent.length === 0 ? (
           <p className="flex items-center gap-2 text-sm text-muted">
             <GitPullRequest aria-hidden className="size-4" /> None yet.{" "}
             <Link to="/" className="text-text underline underline-offset-2 hover:text-brand-2">
@@ -172,26 +195,36 @@ function Page() {
             </Link>
           </p>
         ) : (
-          <ul className="divide-y rounded-card border bg-surface">
-            {pullRequests.map((pr) => (
-              <li
-                key={pr.scan_id}
-                className="flex flex-wrap items-center gap-x-4 px-4 py-3 text-sm"
-              >
-                <span className="tabular font-medium">#{pr.number}</span>
-                <span className="font-mono text-muted">{pr.repo}</span>
-                <a
-                  href={pr.url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="ml-auto text-text underline underline-offset-2 hover:text-brand-2"
+          <>
+            <ul className="divide-y rounded-card border bg-surface">
+              {recent.map((pr) => (
+                <li
+                  key={`${pr.repo}#${pr.number}`}
+                  className="flex flex-wrap items-center gap-x-4 px-4 py-3 text-sm"
                 >
-                  View
-                  <span className="sr-only"> pull request {pr.number} (opens in a new tab)</span>
-                </a>
-              </li>
-            ))}
-          </ul>
+                  <span className="tabular font-medium">#{pr.number}</span>
+                  <span className="min-w-0 truncate">{pr.title}</span>
+                  <span className="font-mono text-muted">{pr.repo}</span>
+                  <span className="text-muted">{pr.state}</span>
+                  <a
+                    href={pr.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="ml-auto text-text underline underline-offset-2 hover:text-brand-2"
+                  >
+                    View
+                    <span className="sr-only"> pull request {pr.number} (opens in a new tab)</span>
+                  </a>
+                </li>
+              ))}
+            </ul>
+            <Link
+              to="/pull-requests"
+              className="text-sm text-text underline underline-offset-2 hover:text-brand-2"
+            >
+              All pull requests
+            </Link>
+          </>
         )}
       </section>
     </div>

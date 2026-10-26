@@ -5,21 +5,22 @@ Pending Points:
 
 Module === Scan Now
 
-1. "Auto-open PR when done" does nothing.
-   auto_ship is sent by the form and accepted by ScanIn, but nothing reads it.
-   POST /scans/{id}/ship returns a hardcoded 501: "Opening pull requests isn't implemented yet."
-   (server/app/routes_scans.py)
-
-2. The TrustStrip claims are not true yet.
-   "every fix is a PR" is not true until PRs are built (item 1). "axe-core re-checks every fix" is now true for page scans.
+1. The TrustStrip claims are not true yet.
+   "every fix is a PR" is true only for repository scans (website scans can't open a PR, see Pull Requests 1). "axe-core re-checks every fix" is now true for page scans.
    (client/src/components/scan/TrustStrip.tsx)
 
-3. Private-address blocking is off by default.
+2. Private-address blocking is off by default.
    ALLOW_PRIVATE_TARGETS=true, so it must be set to false for a deployed server (SSRF protection).
    (server/.env.example, server/app/pipeline.py: check_target)
 
 
 Done:
+- "Auto-open PR when done" works. The switch shows only for "GitHub repo" scans with a valid owner/repo (website scans
+  can't ship: no file/line to commit). The scan stores auto_ship (column scan.auto_ship); after verification the pipeline
+  enters the Shipping stage, opens the PR with the validated, included fixes (server/app/pull_requests.py: open_pull,
+  shared with the Fixes page's Open PR) and logs "pull request #N opened: <url>". A PR that can't be opened (repo not
+  switched on, GitHub error, no validated fixes) is logged and never fails the scan. (server/app/pipeline.py:
+  auto_open_pull, routes_scans.py, client/src/components/scan/ScanForm.tsx)
 - Website scans were axe-only. They now also get an OpenAI review of the rendered page when OPENAI_API_KEY
   is set, and fall back to axe-only without a key or if the review fails. (server/app/page_llm.py)
 - Fix generation and verification (server/app/fixer.py). Axe issues on pages get an OpenAI-proposed patch that is
@@ -46,7 +47,8 @@ polling fallback, severity counters, elapsed timer, pages list, sidebar link to 
    Stage index / 6, capped at 95%. No "page 3 of 12" detail, and "N pages with issues" does not say how many
    pages were scanned. (client/src/components/scan/LiveScan.tsx)
 
-2. The "Shipping" step in the stepper is never reached (PRs are not built, see Scan Now item 1).
+2. [Done] The "Shipping" step is reached when "Auto-open PR when done" is on (repository scans). With it off, opening
+   a PR is a later manual click on the Fixes page and the stepper ends at Done.
 
 Done:
 - Finished or failed scans now open with their stored log. New GET /scans/{id}/log returns the events as JSON and
@@ -96,16 +98,10 @@ Module === Fixes
 Working and dynamic: issue list and fixes from the API, severity/status/principle filters, search, diff viewer,
 validation reason for rejected fixes, before/after score gauge, per-fix include checkbox.
 
-1. [High] "Open PR" cannot work yet.
-   POST /scans/{id}/ship returns 501 (same as Scan Now item 1), so the button ends in an error toast. Also, for a
-   website scan with a repo attached the fixes patch the rendered DOM, not source files: nothing maps a DOM element
-   to a repo file/line, so the "files changed" list in the confirm dialog is empty and a PR can't be built from them.
-   Only repo (source) scans have file + line. (server/app/routes_scans.py: ship, FixesPage.tsx)
-
-2. [Done] Repo (source) scans never got the PR controls (fixed: FixesPage now shows Open PR for source scans).
-   repoMode is `scan.mode === "repo"`, but a repo scan has mode "source". These are the scans whose fixes have a
-   real file and line, yet they show "Connect repo to ship" + "Copy patch" instead of "Open PR".
-   (client/src/components/fixes/FixesPage.tsx: repoMode)
+1. [Med] "Open PR" works only for repository (source) scans.
+   For a website scan with a repo attached the fixes patch the rendered DOM, not source files: nothing maps a DOM
+   element to a repo file/line, so POST /scans/{id}/ship answers 422 and the confirm dialog's "files changed" list is
+   empty (the UI shows "Connect repo to ship" + "Copy patch" for those). (server/app/routes_scans.py: ship)
 
 3. [Med] "Copy patch" is not a real patch.
    It is "-"/"+" lines of the element's HTML (site scans) or of the line range, with a comment header; no file path
@@ -124,11 +120,15 @@ validation reason for rejected fixes, before/after score gauge, per-fix include 
    chip can never appear: every fix is LLM-made. Consider deriving confidence from the verification instead.
 
 7. [Low] Issues with no WCAG number ("n/a") fall into the "Robust" group because principleOf defaults to it.
-   (client/src/lib/wcag.ts: principleOf) Also the include/exclude choices are lost on reload.
+   (client/src/lib/wcag.ts: principleOf)
 
 8. [Low] No way to regenerate a fix, edit the proposed patch, or re-run verification for one issue.
 
 Done:
+- Open PR for repository scans: FixesPage shows "Open PR" for source scans (repoMode was `mode === "repo"`, now
+  `mode === "source"` or any included fix has a source file); POST /scans/{id}/ship builds the PR (see Pull Requests, Done).
+- The include/exclude choice per fix is saved (PATCH /scans/{id}/fixes/{fix_id}, column fix.included) and survives a
+  reload; fixes in the API carry `included`. (server/app/routes_scans.py, models.py, db.py)
 
 ===================================================================================
 ===================================================================================
@@ -140,8 +140,7 @@ Working and dynamic: the page lists real pull requests from GitHub (open / close
 (server/fixes/main.py: ship, via the fixes service).
 
 1. [Med] Website scans (mode "url" / "repo") still cannot open a PR: their fixes patch the rendered DOM and nothing maps
-   an element to a repo file/line, so POST /scans/{id}/ship answers 422 for them. auto_ship is still read by nothing
-   (the form sends it, no PR is opened automatically after a scan).
+   an element to a repo file/line, so POST /scans/{id}/ship answers 422 for them (the auto-open switch is hidden for them).
 
 2. [Med] PR cards still show hardcoded "accessibility" and "automated" chips (not GitHub labels). Checks and review
    status are never fetched, and there is no webhook route (GITHUB_WEBHOOK_SECRET is read by no code).
@@ -248,7 +247,8 @@ connection status, revoked-token detection. Optional hardening only:
 2. [Low] OAuth scope "repo" gives full read/write to every private repo; a GitHub App would be least-privilege.
    (The per-repo "enabled" flag is now enforced before writing to a repo; see Pull Requests, Done.)
 
-3. [Low] The Settings page still says GitHub is "not connected / arrives with the backend" (see Settings 1).
+(The Settings page text about GitHub was fixed, see Settings Done. The pasted-token form and POST
+/integrations/github/token were removed: GitHub connects through OAuth only.)
 
 Done:
 
@@ -315,12 +315,14 @@ delete). The Guide and the API & setup tabs are static text, and parts are wrong
    "Template adapted to your framework" are not built. What exists: one OpenAI-proposed patch per axe issue, checked
    by axe. (client/src/routes/docs.index.tsx: FIXERS)
 
-2. [High] The quick start promises things that aren't there.
-   "opens modals and tabs through the keyboard" is not done, and step 4 "Click Open PR" doesn't work yet.
+2. [Med] The quick start promises things that aren't there.
+   "opens modals and tabs through the keyboard" is not done. (Step 4 "Click Open PR" now works for repository scans only.)
 
 3. [Med] The API reference is incomplete and partly stale.
    Missing: /scans/{id}/log, /scans/{id}/shots/{shot_id}, /sites, /integrations/github, /rule-docs/sync, /health.
-   It says GET /scans/{id} returns a PR (it doesn't) and omits shots and error; /ship is listed as working (501).
+   GET /scans/{id} now does return `pr` (once a PR is open) but the table omits shots and error; /ship is listed without saying
+   it needs a repository scan, and PATCH /scans/{id}/fixes/{fix_id}, GET /integrations/github/pulls|branches|compare and
+   POST /integrations/github/pulls are missing.
    It is hand-written although FastAPI already publishes /docs and /openapi.json: link to or generate from those.
    (client/src/routes/docs.api.tsx: ENDPOINTS)
 

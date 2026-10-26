@@ -74,6 +74,7 @@ class Scan(SQLModel, table=True):
     score_before: int | None = None
     score_after: int | None = None
     error: str | None = None
+    auto_ship: bool = False  # open a pull request with the validated fixes as soon as the scan is done
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 

@@ -19,6 +19,7 @@ def client(monkeypatch, tmp_path):
     monkeypatch.setattr("app.db.get_settings", lambda: cfg)
     monkeypatch.setattr("app.main.get_settings", lambda: cfg)
     monkeypatch.setattr(pipeline, "get_settings", lambda: cfg)
+    monkeypatch.setattr(pipeline, "start", lambda scan_id: None)  # no browser in unit tests
     app.dependency_overrides[get_settings] = lambda: cfg
     with TestClient(app) as c:
         with Session(db.engine()) as s:
@@ -110,3 +111,50 @@ def test_plan_skips_overlapping_fixes():
                      selector="img", html="", source_file="f.html", source_line=2)
     out = plan({"f.html": SOURCE}, [a, b], {"i": issue})
     assert len(out.edits) == 1 and len(out.edits[0].applied) == 1 and len(out.skipped) == 1
+
+
+def test_auto_ship_opens_the_pr_when_the_scan_finishes(client, monkeypatch):
+    import asyncio
+
+    from app.models import EventRow, PullRow
+
+    calls = []
+    stub_github(monkeypatch, calls)
+    with Session(db.engine()) as s:
+        s.add(RepoSetting(full_name="me/site", enabled=True))
+        scan = s.get(Scan, "scan_1")
+        scan.auto_ship = True
+        s.add(scan)
+        s.commit()
+        asyncio.run(pipeline.auto_open_pull(s, scan))
+        assert s.get(PullRow, "scan_1").number == 7
+        msgs = [e.payload for e in s.exec(__import__("sqlmodel").select(EventRow)).all()]
+    assert any("pull request #7 opened" in m for m in msgs)
+
+
+def test_auto_ship_failure_is_logged_not_raised(client, monkeypatch):
+    import asyncio
+
+    from app.models import EventRow, PullRow
+
+    stub_github(monkeypatch, [])
+
+    async def denied(*a, **k):
+        from fastapi import HTTPException
+
+        raise HTTPException(403, "Turn on me/site in the GitHub integration first.")
+
+    monkeypatch.setattr("app.routes_github._repo_token", denied)
+    with Session(db.engine()) as s:
+        scan = s.get(Scan, "scan_1")
+        asyncio.run(pipeline.auto_open_pull(s, scan))
+        assert s.get(PullRow, "scan_1") is None
+        msgs = [e.payload for e in s.exec(__import__("sqlmodel").select(EventRow)).all()]
+    assert any("couldn't open the pull request" in m for m in msgs)
+
+
+def test_auto_ship_is_only_kept_for_repository_scans(client):
+    r = client.post("/scans", json={"url": "a.com", "repo": "me/site", "auto_ship": True})
+    assert r.status_code == 201
+    with Session(db.engine()) as s:
+        assert s.get(Scan, r.json()["id"]).auto_ship is False

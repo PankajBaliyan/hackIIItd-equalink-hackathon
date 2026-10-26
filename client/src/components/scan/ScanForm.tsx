@@ -74,6 +74,7 @@ export function ScanForm({
   }, [saved]);
 
   const repoConnected = repo.trim() !== "" && REPO_RE.test(repo.trim());
+  const canAutoShip = target === "repo" && repoConnected;
 
   const validateUrl = () => {
     if (!url.trim()) return setUrlError(undefined);
@@ -101,7 +102,7 @@ export function ScanForm({
         level,
         scope,
         ...(repoConnected && { repo: repo.trim() }),
-        auto_ship: auto,
+        auto_ship: auto && canAutoShip,
       });
       void qc.invalidateQueries({ queryKey: ["scans"] });
       await navigate({ to: "/scans/$id", params: { id: scan.id } });
@@ -264,13 +265,15 @@ export function ScanForm({
         )}
       </div>
 
-      <LabeledSwitch
-        label="Auto-open PR when done"
-        description="Ships validated fixes as a pull request. Never a direct commit."
-        checked={auto}
-        onCheckedChange={setAuto}
-        disabled={!repoConnected}
-      />
+      {/* Only repository scans have fixes with a file and line to commit, so only they can open a PR by themselves. */}
+      {canAutoShip && (
+        <LabeledSwitch
+          label="Auto-open PR when done"
+          description={`Opens a pull request on ${repo.trim()} with the validated fixes once the scan finishes. Never a direct commit, never merged.`}
+          checked={auto}
+          onCheckedChange={setAuto}
+        />
+      )}
 
       <Button type="submit" variant="primary" size="lg" className="w-full sm:w-auto" loading={busy}>
         {busy ? "Starting scan…" : target === "repo" ? "Scan repo →" : "Scan website →"}

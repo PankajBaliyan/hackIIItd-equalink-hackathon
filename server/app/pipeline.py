@@ -535,6 +535,28 @@ async def llm_review(
         )
 
 
+async def auto_open_pull(db: Session, scan: Scan) -> None:
+    """"Auto-open PR when done": ship the validated, included fixes. A PR that can't be opened never fails the scan."""
+    from fastapi import HTTPException
+
+    from app import pull_requests  # imports models and github only, but keep it off the module's import path
+
+    ready = db.exec(select(FixRow).where(FixRow.scan_id == scan.id, FixRow.validated == True, FixRow.included == True)).all()  # noqa: E712
+    if not ready:
+        emit(db, scan.id, "shipping", "no validated fixes, so no pull request was opened")
+        return
+    set_status(db, scan, "shipping")
+    emit(db, scan.id, "shipping", f"opening a pull request on {scan.repo} with {len(ready)} validated fix(es)")
+    try:
+        pr = await pull_requests.open_pull(db, get_settings(), scan)
+    except HTTPException as e:
+        emit(db, scan.id, "shipping", f"couldn't open the pull request: {e.detail}. Open it from the Fixes page.")
+    except Exception as e:  # network or GitHub trouble
+        emit(db, scan.id, "shipping", f"couldn't open the pull request: {str(e).splitlines()[0][:200] if str(e) else type(e).__name__}")
+    else:
+        emit(db, scan.id, "shipping", f"pull request #{pr.number} opened: {pr.url}")
+
+
 async def run_scan(scan_id: str) -> None:
     s = app_settings.effective(get_settings())  # the environment defaults plus whatever was changed in Settings
     with Session(engine()) as db:
@@ -590,6 +612,8 @@ async def run_scan(scan_id: str) -> None:
                     + ("fixes are turned off in Settings" if s.openai_api_key else "set OPENAI_API_KEY to get proposed fixes")
                     + ", so they are left for human review",
                 )
+            if scan.auto_ship:
+                await auto_open_pull(db, scan)
             set_status(db, scan, "done")
             emit(db, scan_id, "done", f"scan complete: {total} issue(s)", counters=dict(counts))
         except Exception as e:  # any failure should surface in the UI, not vanish in a task

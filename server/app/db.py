@@ -30,6 +30,9 @@ def init_db() -> None:
     if "engine" not in {c["name"] for c in insp.get_columns("scan")}:
         with engine().begin() as conn:
             conn.execute(text("ALTER TABLE scan ADD COLUMN engine VARCHAR NOT NULL DEFAULT 'local'"))
+    if "auto_ship" not in {c["name"] for c in insp.get_columns("scan")}:
+        with engine().begin() as conn:
+            conn.execute(text("ALTER TABLE scan ADD COLUMN auto_ship BOOLEAN NOT NULL DEFAULT 0"))
     issue_cols = {c["name"] for c in insp.get_columns("issue")}
     for name, ddl in (
         ("rule_doc_id", "INTEGER"),
